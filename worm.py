@@ -11,6 +11,7 @@ from scipy.interpolate import CubicSpline
 import csv
 import sys
 from datetime import datetime
+from time import process_time
 
 class Worm:
     """
@@ -34,21 +35,37 @@ class Worm:
         self.max_points = -1
         self.skip = skip
         self.segnet = segnet
+        self.runtime = []
 
-    def add_frame(self, video_frame, denoise: float = 2, thresh: int = 30):
+    def add_frame(self, video_frame, denoise: float = 2, thresh: int = 30, spacing: int = 15):
         """
-        Update the information of the worm with a new frame. Returns 1 if the user chose to skip the frame.
+        Update the information of the worm with a new frame. Returns 1 if the user chose to skip the frame on the first
+        frame, -1 for the user choosing to skip a frame in general.
         """
         # the base augmentation is denoise -> histogram equalization -> thresholding
+        denoise_start = process_time()
         augment_frame = skimage.util.img_as_ubyte(denoise_tv_bregman(video_frame, weight=denoise))
+        denoise_end = process_time()
+
+        # histogram equalization
         augment_frame = cv2.equalizeHist(augment_frame)
-        thresh_augment_frame = threshold(augment_frame, thresh)
+        hist_end = process_time()
+
+        # fast thresholding using numpy
+        thresh_frame = np.asarray(augment_frame)
+        thresh_indices = thresh_frame > thresh
+        thresh_frame[thresh_indices] = 255 # slow: use double for loop manual thresholding
+        thresh_end = process_time()
 
         # segment the frame
-        skeleton_frame = self.get_mask(thresh_augment_frame)
+        cnn_start = process_time()
+        skeleton_frame = self.get_mask(thresh_frame)
+        cnn_end = process_time()
 
         # attempt to grab the head
+        head_grab_start = process_time()
         ret = self.get_head(skeleton_frame)
+        head_grab_end = process_time()
 
         # handle the case when it is the first frame and user chose to skip to next frame
         if ret == 1:
@@ -57,6 +74,7 @@ class Worm:
         # the case when the head tracking reported an error due to the new head position being too far from the old one
         elif ret == -1:
             # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
+            print("Thresholded frame errored, trying again with less augmented video frame...")
             skeleton_frame = self.get_mask(augment_frame)
             ret = self.get_head(skeleton_frame, first_try=False)
 
@@ -65,8 +83,48 @@ class Worm:
             return -1
 
         # otherwise proceed with the rest of the body update
-        self.get_skeleton(skeleton_frame)
+        # self.get_skeleton(skeleton_frame)
+        body_sort_start = process_time()
         self.body_sort(skeleton_frame)
+        body_sort_end = process_time()
+
+        # get centrepoints using interpolation
+        interp_start = process_time()
+        [f_x, f_y, t_vals, x_vals, y_vals] = self.get_interp()
+
+        interval = np.arange(min(t_vals), max(t_vals), spacing)
+
+        f_x_vals = f_x(interval)
+        f_y_vals = f_y(interval)
+        interp_end = process_time()
+
+        # x_col = f_x_vals.reshape((len(f_x_vals), 1))
+        # y_col = f_y_vals.reshape((len(f_y_vals), 1))
+        #
+        # points = np.concatenate((x_col, y_col), axis=1)
+        # print(f'Interpolation points: {points}')
+
+        file_save_start = process_time()
+        plt.plot(f_x_vals, f_y_vals, 'o', alpha=0.9)
+        # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
+        ax = plt.gca()
+        ax.set_xlim([0, 1024])
+        ax.set_ylim([0, 1024])
+
+        plt.savefig("file%02d.png" % len(self.head_positions), dpi=300)
+        plt.clf()
+        file_save_end = process_time()
+
+        times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
+                 (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
+                 (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
+                 (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
+        times_dict = {stage: time for time, stage in times}
+        self.runtime.append(times_dict)
+
+        print(times)
+
+        return skeleton_frame
 
     def get_mask(self, original_arr: np.array):
         """
@@ -78,22 +136,6 @@ class Worm:
         mask_erode = erode(mask)
         mask_erode = ChooseLargestBlob(mask_erode)
         mask_skeleton = skeletonize(mask_erode)
-
-        # body_points = sortSkeleton(mask_skeleton)
-        # [f_x, f_y, t_vals, x_vals, y_vals] = self.get_interp()
-        # # [spline_x, spline_y, t_vals, x_vals, y_vals] = fitSpline(worm.sorted_body[-1])
-        # # frame = np.zeros(np.shape(mask_skeleton))
-        #
-        # f_x_vals = f_x(t_vals)
-        # f_y_vals = f_y(t_vals)
-        #
-        # plt.plot(f_x_vals, f_y_vals, alpha=0.9)
-        # ax = plt.gca()
-        # ax.set_xlim([0, 1024])
-        # ax.set_ylim([0, 1024])
-        #
-        # plt.savefig("temp_video_data/file%02d.png" % idx, dpi=300)
-        # plt.clf()
 
         return mask_skeleton
 
@@ -111,6 +153,7 @@ class Worm:
         skip = 1
 
         for i in range(1, (len(self.sorted_body[-1]) - 1) // skip):
+            # as long as the gap between subsequent points is not too long, add it to be fitted by the spline
             if incr_dst <= ERROR_TOL:
                 x_vals.append(self.sorted_body[-1][skip * i][1])
                 y_vals.append(1024 - self.sorted_body[-1][skip * i][0])
@@ -212,7 +255,7 @@ class Worm:
         skeleton_points = np.column_stack(np.where(skeleton_frame != 0))
 
         # set a search radius around each point for the points nearby it
-        RADIUS = 5
+        RADIUS = 1 # slow: 5
         steps = list(itertools.product(range(-RADIUS, RADIUS + 1), repeat=2))
 
         for point in skeleton_points:
@@ -237,6 +280,7 @@ class Worm:
             for a, b in itertools.combinations(range(len(vectors)), 2):
                 if np.dot(vectors[a], vectors[b]) < 0:
                     head_candidate = False
+                    break # slow: no break
 
             if head_candidate:
                 head_candidates.append(point)
@@ -391,6 +435,24 @@ class Worm:
                     data.append(str(y))
                 writer.writerow(data)
                 time += 1/self.fps
+
+    def runtime_to_csv(self, filename=""):
+        """
+        Converts the runtimes of each part of the pipeline for each frame into a csv
+        """
+        if len(filename) == 0:
+            time = datetime.now()
+            filename = f'csv_data/runtime{time.hour}_{time.minute}_{self.src}.csv'
+
+        with open(filename, mode='w', newline='') as rt_data:
+            writer = csv.writer(rt_data, delimiter=',', quotechar="|", quoting=csv.QUOTE_MINIMAL)
+            components = list(self.runtime[0].keys())
+
+            writer.writerow(["frame"] + components)
+
+            for i in range(len(self.runtime)):
+                columns = [self.runtime[i][label] for label in components]
+                writer.writerow([str(i)] + columns)
 
     def save_body_points(self, i):
         """

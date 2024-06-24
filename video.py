@@ -67,7 +67,8 @@ def get_mask(worm: Worm, original_arr: np.array, idx: int):
     return mask_skeleton
 
 
-def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[int], start: int, end: int, denoise: float = 2, thresh: int = 30) -> Worm:
+def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[int], start: int, end: int, segnet,
+                     denoise: float = 2, thresh: int = 30) -> Worm:
     """
     Takes a video saved at fpath, runs the processing pipeline on it, and saves the masked & eroded result
     to a video at the location specified by save. The number of frames in the video to be processed can be
@@ -82,7 +83,7 @@ def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[i
     cap = cv2.VideoCapture(f'{data_dir}/{fname}')
     i = 0
     # head_guess = [253, 604]
-    worm = Worm(fname, init_head_pos, False)
+    worm = Worm(fname, init_head_pos, False, segnet)
 
     # go through frame by frame
     while (cap.isOpened() and i < end):
@@ -97,46 +98,53 @@ def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[i
 
             # put the frame through pipeline and save to video
             print(f"processing frame {i}")
-            data = skimage.util.img_as_ubyte(denoise_tv_bregman(vid_frame, weight=denoise))
-            data = cv2.equalizeHist(data)
-            data = threshold(data, thresh)
+            skeleton = worm.add_frame(vid_frame)
 
-            # try and segment the current frame
-            data = get_mask(worm, data, i)
-            success = False
-            if type(data) != int:
-                success = True
-            # if the neural network errored, try and segment a less processed frame
-            elif not success:
-                print("Trying less processed frame...")
-                data = cv2.equalizeHist(vid_frame)
-                data = get_mask(worm, data, i, first_try=False)
+            # data = skimage.util.img_as_ubyte(denoise_tv_bregman(vid_frame, weight=denoise))
+            # data = cv2.equalizeHist(data)
+            # data = threshold(data, thresh)
+            #
+            # # try and segment the current frame
+            # data = get_mask(worm, data, i)
+            # success = False
+            # if type(data) != int:
+            #     success = True
+            # # if the neural network errored, try and segment a less processed frame
+            # elif not success:
+            #     print("Trying less processed frame...")
+            #     data = cv2.equalizeHist(vid_frame)
+            #     data = get_mask(worm, data, i)
 
-            if type(data) != int:
+            if type(skeleton) != int:
                 # draw out where the head and body points are
                 head_guess = worm.head_positions[-1]
                 v = 255
-                print(worm.body_points[-1])
-                for point in worm.body_points[-1]:
-                    try:
-                        for r, c in itertools.combinations_with_replacement(range(-2, 3), 2):
-                            data[int(point[0]) + r][int(point[1]) + c] = v
-                    except IndexError:
-                        pass
+                # print(worm.body_points[-1])
+                # for point in worm.body_points[-1]:
+                #     try:
+                #         for r, c in itertools.combinations_with_replacement(range(-2, 3), 2):
+                #             skeleton[int(point[0]) + r][int(point[1]) + c] = v
+                #     except IndexError:
+                #         pass
                 try:
                     for r, c in itertools.product(range(-3, 4), repeat=2):
-                        data[head_guess[0] + r][head_guess[1] + c] = 255
+                        skeleton[head_guess[0] + r][head_guess[1] + c] = 255
                 except IndexError:
                     pass
-                out.write(data)
+                out.write(skeleton)
                 print(f'processed frame {i}')
+
+            elif skeleton == 1:
+                print("User skipped frame.")
+            elif skeleton == -1:
+                print("Could not resolve head, skipping frame. ")
 
         i += 1
         cv2.destroyAllWindows()
 
     subprocess.call([
         'ffmpeg', '-framerate', '8', '-i', 'file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-        'spline.mp4'
+        'spline_points.mp4'
     ])
     subprocess.call([
         'ffmpeg', '-framerate', '8', '-i', 'sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
@@ -159,24 +167,25 @@ segnet.eval()
 data_dir = 'C:/Users/chane/Downloads/school files/uni/2023-2024/summer/ROP/data'
 os.chdir(data_dir)#\\Bad alignment\\h5_20220922_3 6000")
 
-subprocess.call([
-    'ffmpeg', '-framerate', '8', '-i', 'file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-    'spline.mp4'
-])
-subprocess.call([
-    'ffmpeg', '-framerate', '8', '-i', 'sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-    'sorted_body_vid.mp4'
-])
-for file_name in glob.glob("*.png"):
-    os.remove(file_name)
+# subprocess.call([
+#     'ffmpeg', '-framerate', '8', '-i', 'file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+#     'spline.mp4'
+# ])
+# subprocess.call([
+#     'ffmpeg', '-framerate', '8', '-i', 'sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+#     'sorted_body_vid.mp4'
+# ])
+# for file_name in glob.glob("*.png"):
+#     os.remove(file_name)
 
 fp="recording_04242024_135452_15minutes.avi" # r"E:\Behaviour 23\New folder\recording_04242024_135452_15minutes.avi"
 output_name = 'test'
 start_frame = 0
-end_frame = 100
+end_frame = 10
 initial_head_position = [813, 190]
 
-worm = get_masked_video(data_dir, fp, f'{output_name}.mp4', initial_head_position, start_frame, end_frame)
+worm = get_masked_video(data_dir, fp, f'{output_name}.mp4', initial_head_position, start_frame, end_frame, segnet)
 # worm = get_masked_video(data_dir, fp, 'test.mp4', 398, 420)
 # # print(f'shortest segments: {worm.min_points}')
 worm.to_csv()
+worm.runtime_to_csv()
