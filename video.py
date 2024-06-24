@@ -19,7 +19,7 @@ from classes import *
 ##File parameters
 import warnings
 warnings.filterwarnings("ignore")
-device = torch.device("cpu")
+device = torch.device("cuda")
 # device = torch.device("cuda:0")
 
 def save_img(data, name='', i=0):
@@ -100,21 +100,6 @@ def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[i
             print(f"processing frame {i}")
             skeleton = worm.add_frame(vid_frame)
 
-            # data = skimage.util.img_as_ubyte(denoise_tv_bregman(vid_frame, weight=denoise))
-            # data = cv2.equalizeHist(data)
-            # data = threshold(data, thresh)
-            #
-            # # try and segment the current frame
-            # data = get_mask(worm, data, i)
-            # success = False
-            # if type(data) != int:
-            #     success = True
-            # # if the neural network errored, try and segment a less processed frame
-            # elif not success:
-            #     print("Trying less processed frame...")
-            #     data = cv2.equalizeHist(vid_frame)
-            #     data = get_mask(worm, data, i)
-
             if type(skeleton) != int:
                 # draw out where the head and body points are
                 head_guess = worm.head_positions[-1]
@@ -161,7 +146,8 @@ def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[i
 model_dir = 'C:/Users/chane/Downloads/school files/uni/2023-2024/summer/ROP/models'
 os.chdir(model_dir)
 segnet = SegNet()
-segnet.load_state_dict(torch.load("ver15.pth",map_location=device))
+segnet.load_state_dict(torch.load("ver15.pth",map_location="cuda:0"))
+segnet.to(device)
 segnet.eval()
 
 data_dir = 'C:/Users/chane/Downloads/school files/uni/2023-2024/summer/ROP/data'

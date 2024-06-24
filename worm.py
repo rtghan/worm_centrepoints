@@ -130,7 +130,7 @@ class Worm:
         """
         Takes a frame from the video, and puts it through the pipeline to get the segmented/skeletonized version.
         """
-        mask = getPrediction(original_arr, self.segnet, torch.device("cpu"))
+        mask = getPrediction(original_arr, self.segnet, torch.device("cuda"))
         mask = ChooseLargestBlob(mask)
         # mask_filled = fillHoles(mask)
         mask_erode = erode(mask)
