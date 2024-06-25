@@ -124,25 +124,23 @@ os.chdir(data_dir)#\\Bad alignment\\h5_20220922_3 6000")
 
 # subprocess.call([
 #     'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-#     'spline_points.mp4'
+#     'spline_points_stable_vid.mp4'
 # ])
-# subprocess.call([
-#     'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-#     'sorted_body_vid.mp4'
-# ])
+#
 # os.chdir(f'{data_dir}/temp_processed_frames')
 # for file_name in glob.glob("*.png"):
 #     os.remove(file_name)
 # os.chdir(data_dir)
 
-fp="recording_04242024_135452_15minutes.avi" # r"E:\Behaviour 23\New folder\recording_04242024_135452_15minutes.avi"
-output_name = 'thresh_vid_pre_CNN'
+fp="recording_04242024_143948_10mins.avi" # r"E:\Behaviour 23\New folder\recording_04242024_135452_15minutes.avi"
+output_name = 'stable'
 start_frame = 0
-end_frame = 500
-initial_head_position = [813, 190]
+end_frame = 10
+initial_head_position = [800, 500]
 
 worm = get_masked_video(data_dir, fp, f'{output_name}.mp4', initial_head_position, start_frame, end_frame, segnet)
 # worm = get_masked_video(data_dir, fp, 'test.mp4', 398, 420)
-# # print(f'shortest segments: {worm.min_points}')
-worm.to_csv()
+# print(f'shortest segments: {worm.min_points}')
+# worm.to_csv()
 worm.runtime_to_csv()
+worm.position_csv.close()

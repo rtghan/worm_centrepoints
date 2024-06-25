@@ -31,11 +31,11 @@ class Worm:
         body_points: a list of the evenly spaced body points along the centreline of the worm, starting at the head
                      at each frame
         sorted_body: a list of the sorted points of the worm centreline from head to end at each frame
-        min_points: the minimum number of body points detected across all frames
         max_points: the max number of body points detecte across all frames
         skip: whether or not to automatically skip error-throwing frames
         segnet: the CNN used to segment the worm frame
         runtime: a list of the runtimes of each component of the pipeline for each frame
+        cframe: current frame to be processed
     """
     def __init__(self, src, initial_head_guess, skip, segnet):
         self.src = src
@@ -44,13 +44,14 @@ class Worm:
         self.fps = 11
         self.body_points = []
         self.sorted_body = []
-        self.min_points = 9999
+        self.cframe = 1
         self.max_points = -1
         self.skip = skip
         self.segnet = segnet
         self.runtime = []
+        self.position_csv, self.position_writer = self.init_csv()
 
-    def add_frame(self, video_frame, denoise: float = 2, thresh: int = 30, spacing: int = 15):
+    def add_frame(self, video_frame, denoise: float = 2, thresh: int = 40, spacing: int = 15):
         """
         Update the information of the worm with a new frame. Returns 1 if the user chose to skip the frame on the first
         frame, -1 for the user choosing to skip a frame in general.
@@ -85,20 +86,22 @@ class Worm:
             return 1
 
         # the case when the head tracking reported an error due to the new head position being too far from the old one
-        elif ret == -1:
+        backups, prev = [augment_frame], thresh_frame
+        while ret == -1 and len(backups) > 0:
+            backup = backups.pop()
             # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
-            print("Thresholded frame errored, trying again with less augmented video frame...")
-            self.save_img(thresh_frame, "fail_thresh", len(self.head_positions))
-            skeleton_frame = self.get_mask(augment_frame)
-            ret = self.get_head(skeleton_frame, first_try=False)
+            print("Frame errored, trying again with backup frame...")
+            self.save_img(prev, f"fail_frames/fail_frame_{len(backups)}_", len(self.head_positions))
+            skeleton_frame = self.get_mask(backup)
+            ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
+            prev = backup
 
-        # if there is an error and the user still wants to skip, then we must return
+        # if there is still an error and the user still wants to skip, then we must return
         if ret == -1:
-            self.save_img(augment_frame, "fail_augment", len(self.head_positions))
+            self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
             return -1
 
         # otherwise proceed with the rest of the body update
-        # self.get_skeleton(skeleton_frame)
         body_sort_start = process_time()
         self.body_sort(skeleton_frame)
         body_sort_end = process_time()
@@ -129,6 +132,8 @@ class Worm:
                  (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
         times_dict = {stage: time for time, stage in times}
         self.runtime.append(times_dict)
+        self.add_points_csv()
+        self.cframe += 1
 
         print(f'Runtime of pipeline parts: {times}')
 
@@ -146,6 +151,22 @@ class Worm:
         mask_skeleton = skeletonize(mask_erode)
 
         return mask_skeleton
+
+    def get_mask_no_CNN(self, original_arr: np.array):
+        """
+        Takes a frame from the video, and attempts to use purely image processing methods to
+        get the skeletonized version.
+
+        Assume that the input frame, original_arr, has been thresholded so that the worm (among other things) is 0
+        """
+        # flip image
+        flipped = np.zeros(original_arr.shape)
+        white_pix = original_arr == 255
+        black_pix = original_arr == 0
+        flipped[white_pix] = 0
+        flipped[black_pix] = 255
+
+        # TODO: finish this function
 
     def get_interp(self, ERROR_TOL=20, method=UnivariateSpline):
         """
@@ -175,7 +196,7 @@ class Worm:
 
         return [x_interp, y_interp, dists, x_vals, y_vals]
 
-    def get_head(self, skeleton_frame, ERROR_TOL=80, first_try = True):
+    def get_head(self, skeleton_frame, ERROR_TOL=80, backups = True):
         """
         Input a new frame of skeleton points to the worm to update where its head is
         """
@@ -203,8 +224,8 @@ class Worm:
             if math.dist(prev, head_guess) < ERROR_TOL:
                 self.head_positions.append(head_guess)
             else:
-                # if the first try returns an error on the head, then we should try again with a different base image
-                if first_try:
+                # if we return an error on the head, then we should try processing a backup if there are any
+                if backups:
                     return -1
 
                 user_choice = self._get_user_selection(skeleton_frame, head_candidates)
@@ -235,7 +256,7 @@ class Worm:
                 print(f'{i}: {head_candidates[i]}')
             else:
                 print(f'{i}: (row, column) - ({head_candidates[i][0]}, {head_candidates[i][1]}) ')
-        # TODO: show user a picture of the messed up image
+
         mod = skeleton_frame
         for i in range(len(head_candidates) - 1):
             try:
@@ -321,7 +342,7 @@ class Worm:
         self._dfs(self.head_positions[-1], skeleton_frame)
         sys.setrecursionlimit(1000)
         self.sorted_body[-1].reverse()
-        self.save_sorted_body()
+        # self.save_sorted_body()
 
     def _dfs(self, curr_point, skeleton_frame):
         N_ROWS, N_COLS = skeleton_frame.shape
@@ -375,7 +396,7 @@ class Worm:
         # travel the spline in little increments until we reach one segment length
         while t < end:
             curr_point = (f_x(t), f_y(t))
-            prev_point = (skeleton_points[-1])
+            prev_point = skeleton_points[-1]
             step_len = math.dist(curr_point, prev_point)
             segment_length += step_len
             skeleton_points.append(curr_point)
@@ -392,67 +413,50 @@ class Worm:
             t += dt
 
         # update the # points metrics as appropriate
-        if len(spaced_body_points) < self.min_points:
-            self.min_points = len(spaced_body_points)
         if len(spaced_body_points) > self.max_points:
             self.max_points = len(spaced_body_points)
 
         self.body_points.append(spaced_body_points)
+    def init_csv(self, filename=""):
+        """
+        Creates the csv file to be written to that saves position data of the worm in a format apt for usage in
+        Ruby's UCI pipeline (as of 17/06/2024)
+        """
+        if len(filename) == 0:
+            time = datetime.now()
+            filename = f'csv_data/{time.hour}_{time.minute}_{self.src}.csv'
 
+        worm_data = open(filename, mode='w', newline='')
+        writer = csv.writer(worm_data, delimiter=',', quotechar="|", quoting=csv.QUOTE_MINIMAL)
 
+        writer.writerow(["Worm Data", "Center Points (um)"])
+        writer.writerow(["Sequence", self.src])
+        writer.writerow([])
+        writer.writerow(["", "Worm 1"])
 
-        # N_ROWS, N_COLS = skeleton_frame.shape
-        # visited = np.zeros((N_ROWS, N_COLS))
-        # n_visited = 1
-        # body_points = [self.head_positions[-1]]
-        # explore_points = [self.head_positions[-1]]
-        # visited[self.head_positions[-1][0]][self.head_positions[-1][1]] = 1
-        #
-        # # set a search radius around each point for the points nearby it
-        # RADIUS = 3
-        # steps = list(itertools.product(range(-RADIUS, RADIUS + 1), repeat=2))
-        #
-        # # travel along the worm from the head for a certain segment length and place a body point at the end until
-        # # we reach the desired amount of body points or we run out of worm to travel
-        # segment_length = 0
-        # while len(explore_points) > 0:
-        #     curr_point = explore_points.pop()
-        #
-        #     # get the next point in the worm
-        #     close_points = []
-        #     for row_step, col_step in steps:
-        #         search_row, search_col = curr_point[0] + row_step, curr_point[1] + col_step
-        #         if 0 <= search_row < N_ROWS and 0 <= search_col < N_COLS:
-        #             if (skeleton_frame[search_row][search_col] == 255) and (visited[search_row][search_col] == 0):
-        #                 p = [search_row, search_col]
-        #                 close_points.append([math.dist(curr_point, p), p])
-        #
-        #     if len(close_points) > 0:
-        #         sorted_close = sorted(close_points, key=lambda x: x[0])
-        #         next_point = sorted_close[0][1]
-        #         explore_points.append(next_point)
-        #         step_dist = math.dist(curr_point, next_point)
-        #         segment_length += step_dist
-        #
-        #         # see if we have reached the appropriate segment length
-        #         if segment_length >= spacing:
-        #             # compute the overshoot
-        #             overshoot = segment_length - spacing
-        #             adjustment_vec = (overshoot / segment_length) * np.subtract(curr_point, next_point)
-        #             body_points.append(next_point + adjustment_vec)
-        #             segment_length = overshoot
-        #
-        #         visited[curr_point[0]][curr_point[1]] = 1
-        #         n_visited += 1
-        #
-        # if len(body_points) < self.min_points:
-        #     self.min_points = len(body_points)
-        # if len(body_points) > self.max_points:
-        #     self.max_points = len(body_points)
-        #
-        # print(f"found {len(body_points)} points")
-        #
-        # self.body_points.append(body_points)
+        columns = ["Frame", "Time"]
+        for i in range(1, 100):
+            columns.append(f'{i}x')
+            columns.append(f'{i}y')
+
+        writer.writerow(columns)
+
+        return worm_data, writer
+
+    def add_points_csv(self):
+        """
+        Adds the position data of the latest frame to the position csv.
+        """
+        time = self.cframe / self.fps
+        data = [str(self.cframe), str(time)]
+        for point in self.body_points[self.cframe - 1]:
+            r, c = point
+            x = c
+            y = 1024 - r
+            data.append(str(x))
+            data.append(str(y))
+
+        self.position_writer.writerow(data)
 
     def to_csv(self, filename=""):
         """
