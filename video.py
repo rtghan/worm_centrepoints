@@ -33,40 +33,6 @@ def save_img(data, name='', i=0):
     ending = "%02d.png" % i
     formatted_name = name + ending
     new_p.save(formatted_name)
-
-def get_mask(worm: Worm, original_arr: np.array, idx: int):
-    """
-    Takes a frame from the video, and puts it through the pipeline to get the segmented/skeletonized version.
-    """
-    mask = getPrediction(original_arr, segnet, torch.device("cpu"))
-    mask = ChooseLargestBlob(mask)
-    # mask_filled = fillHoles(mask)
-    mask_erode = erode(mask)
-    mask_erode = ChooseLargestBlob(mask_erode)
-    mask_skeleton = skeletonize(mask_erode)
-    if worm.add_frame(mask_skeleton) == -1:
-        return -1
-
-    # body_points = sortSkeleton(mask_skeleton)
-    [f_x, f_y, t_vals, x_vals, y_vals] = worm.get_interp()
-    # [spline_x, spline_y, t_vals, x_vals, y_vals] = fitSpline(worm.sorted_body[-1])
-    # frame = np.zeros(np.shape(mask_skeleton))
-
-    f_x_vals = f_x(t_vals)
-    f_y_vals = f_y(t_vals)
-
-    plt.plot(f_x_vals, f_y_vals, alpha=0.9)
-    # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
-    ax = plt.gca()
-    ax.set_xlim([0, 1024])
-    ax.set_ylim([0, 1024])
-
-    plt.savefig("file%02d.png" % idx, dpi=300)
-    plt.clf()
-
-    return mask_skeleton
-
-
 def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[int], start: int, end: int, segnet,
                      denoise: float = 2, thresh: int = 30) -> Worm:
     """
@@ -128,15 +94,18 @@ def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[i
         cv2.destroyAllWindows()
 
     subprocess.call([
-        'ffmpeg', '-framerate', '8', '-i', 'file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+        'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
         'spline_points.mp4'
     ])
     subprocess.call([
-        'ffmpeg', '-framerate', '8', '-i', 'sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+        'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
         'sorted_body_vid.mp4'
     ])
+    os.chdir(f'{data_dir}/temp_processed_frames')
     for file_name in glob.glob("*.png"):
         os.remove(file_name)
+    os.chdir(data_dir)
+
     cap.release()
     out.release()
     return worm
@@ -154,20 +123,22 @@ data_dir = 'C:/Users/chane/Downloads/school files/uni/2023-2024/summer/ROP/data'
 os.chdir(data_dir)#\\Bad alignment\\h5_20220922_3 6000")
 
 # subprocess.call([
-#     'ffmpeg', '-framerate', '8', '-i', 'file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-#     'spline.mp4'
+#     'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+#     'spline_points.mp4'
 # ])
 # subprocess.call([
-#     'ffmpeg', '-framerate', '8', '-i', 'sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+#     'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
 #     'sorted_body_vid.mp4'
 # ])
+# os.chdir(f'{data_dir}/temp_processed_frames')
 # for file_name in glob.glob("*.png"):
 #     os.remove(file_name)
+# os.chdir(data_dir)
 
 fp="recording_04242024_135452_15minutes.avi" # r"E:\Behaviour 23\New folder\recording_04242024_135452_15minutes.avi"
-output_name = 'test'
+output_name = 'thresh_vid_pre_CNN'
 start_frame = 0
-end_frame = 10
+end_frame = 500
 initial_head_position = [813, 190]
 
 worm = get_masked_video(data_dir, fp, f'{output_name}.mp4', initial_head_position, start_frame, end_frame, segnet)

@@ -18,11 +18,24 @@ class Worm:
     Class to model the worm and keep track of its body. "Skeleton points" refers to the points that make up the centre
     line of the worm basically.
 
+    Creation Parameters:
     src: The name of the file of the video recording of this worm.
     intial_head_guess: a (row, column) coordinate detailing an approximate guess for the head position on the
                        first frame
     skip: Whether or not to automatically skip problematic frames
     segnet: The CNN that we are using to segment the video frames.
+
+    Attributes:
+        src: The name of the file the worm comes from
+        fps: The fps of the video (used for generating timestamps in the .csv)
+        body_points: a list of the evenly spaced body points along the centreline of the worm, starting at the head
+                     at each frame
+        sorted_body: a list of the sorted points of the worm centreline from head to end at each frame
+        min_points: the minimum number of body points detected across all frames
+        max_points: the max number of body points detecte across all frames
+        skip: whether or not to automatically skip error-throwing frames
+        segnet: the CNN used to segment the worm frame
+        runtime: a list of the runtimes of each component of the pipeline for each frame
     """
     def __init__(self, src, initial_head_guess, skip, segnet):
         self.src = src
@@ -75,11 +88,13 @@ class Worm:
         elif ret == -1:
             # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
             print("Thresholded frame errored, trying again with less augmented video frame...")
+            self.save_img(thresh_frame, "fail_thresh", len(self.head_positions))
             skeleton_frame = self.get_mask(augment_frame)
             ret = self.get_head(skeleton_frame, first_try=False)
 
         # if there is an error and the user still wants to skip, then we must return
         if ret == -1:
+            self.save_img(augment_frame, "fail_augment", len(self.head_positions))
             return -1
 
         # otherwise proceed with the rest of the body update
@@ -88,33 +103,26 @@ class Worm:
         self.body_sort(skeleton_frame)
         body_sort_end = process_time()
 
-        # get centrepoints using interpolation
+        # get body points using interpolation
         interp_start = process_time()
-        [f_x, f_y, t_vals, x_vals, y_vals] = self.get_interp()
+        self.get_skeleton(spacing)
 
-        interval = np.arange(min(t_vals), max(t_vals), spacing)
-
-        f_x_vals = f_x(interval)
-        f_y_vals = f_y(interval)
+        # select the x and y coordinates respectively to plot
+        f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
         interp_end = process_time()
 
-        # x_col = f_x_vals.reshape((len(f_x_vals), 1))
-        # y_col = f_y_vals.reshape((len(f_y_vals), 1))
-        #
-        # points = np.concatenate((x_col, y_col), axis=1)
-        # print(f'Interpolation points: {points}')
-
         file_save_start = process_time()
-        plt.plot(f_x_vals, f_y_vals, 'o', alpha=0.9)
+        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9)
         # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
         ax = plt.gca()
         ax.set_xlim([0, 1024])
         ax.set_ylim([0, 1024])
 
-        plt.savefig("file%02d.png" % len(self.head_positions), dpi=300)
+        plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
         plt.clf()
         file_save_end = process_time()
 
+        # track runtime of each component
         times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
                  (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
                  (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
@@ -122,9 +130,9 @@ class Worm:
         times_dict = {stage: time for time, stage in times}
         self.runtime.append(times_dict)
 
-        print(times)
+        print(f'Runtime of pipeline parts: {times}')
 
-        return skeleton_frame
+        return thresh_frame
 
     def get_mask(self, original_arr: np.array):
         """
@@ -228,7 +236,15 @@ class Worm:
             else:
                 print(f'{i}: (row, column) - ({head_candidates[i][0]}, {head_candidates[i][1]}) ')
         # TODO: show user a picture of the messed up image
-        new_p = Image.fromarray(skeleton_frame)
+        mod = skeleton_frame
+        for i in range(len(head_candidates) - 1):
+            try:
+                for r, c in itertools.product(range(-3, 4), repeat=2):
+                    mod[head_candidates[i][0] + r][head_candidates[i][1] + c] = 255
+            except IndexError:
+                pass
+
+        new_p = Image.fromarray(mod)
         if new_p.mode != 'RGB':
             new_p = new_p.convert('RGB')
         new_p.show()
@@ -342,63 +358,101 @@ class Worm:
         self.end_time[r][c] = self.time
         self.sorted_body[-1].append(curr_point)
 
-    def get_skeleton(self, skeleton_frame, spacing=15):
+    def get_skeleton(self, spacing):
         """
         Generates body points from the latest stored position of the head that are approximately spacing units apart,
         arc-length wise
         """
-        N_ROWS, N_COLS = skeleton_frame.shape
-        visited = np.zeros((N_ROWS, N_COLS))
-        n_visited = 1
-        body_points = [self.head_positions[-1]]
-        explore_points = [self.head_positions[-1]]
-        visited[self.head_positions[-1][0]][self.head_positions[-1][1]] = 1
+        [f_x, f_y, t_vals, x_vals, y_vals] = self.get_interp()
 
-        # set a search radius around each point for the points nearby it
-        RADIUS = 3
-        steps = list(itertools.product(range(-RADIUS, RADIUS + 1), repeat=2))
-
-        # travel along the worm from the head for a certain segment length and place a body point at the end until
-        # we reach the desired amount of body points or we run out of worm to travel
+        # use the spline to get approx. equally spaced points (arc-length) wise
+        spaced_body_points = [(f_x(0), f_y(0))]
+        skeleton_points = [(f_x(0), f_y(0))]
+        dt = 0.25
+        t, end = 0 + dt, max(t_vals)
         segment_length = 0
-        while len(explore_points) > 0:
-            curr_point = explore_points.pop()
 
-            # get the next point in the worm
-            close_points = []
-            for row_step, col_step in steps:
-                search_row, search_col = curr_point[0] + row_step, curr_point[1] + col_step
-                if 0 <= search_row < N_ROWS and 0 <= search_col < N_COLS:
-                    if (skeleton_frame[search_row][search_col] == 255) and (visited[search_row][search_col] == 0):
-                        p = [search_row, search_col]
-                        close_points.append([math.dist(curr_point, p), p])
+        # travel the spline in little increments until we reach one segment length
+        while t < end:
+            curr_point = (f_x(t), f_y(t))
+            prev_point = (skeleton_points[-1])
+            step_len = math.dist(curr_point, prev_point)
+            segment_length += step_len
+            skeleton_points.append(curr_point)
 
-            if len(close_points) > 0:
-                sorted_close = sorted(close_points, key=lambda x: x[0])
-                next_point = sorted_close[0][1]
-                explore_points.append(next_point)
-                step_dist = math.dist(curr_point, next_point)
-                segment_length += step_dist
+            # check if we have reached one segment length
+            if segment_length >= spacing:
+                # compute any overshoot:
+                overshoot = segment_length - spacing
+                adjustment_vec = (overshoot / segment_length) * np.subtract(prev_point, curr_point)
+                spaced_body_points.append(curr_point + adjustment_vec)
+                segment_length = overshoot
 
-                # see if we have reached the appropriate segment length
-                if segment_length >= spacing:
-                    # compute the overshoot
-                    overshoot = segment_length - spacing
-                    adjustment_vec = (overshoot / segment_length) * np.subtract(curr_point, next_point)
-                    body_points.append(next_point + adjustment_vec)
-                    segment_length = overshoot
+            # move down the worm
+            t += dt
 
-                visited[curr_point[0]][curr_point[1]] = 1
-                n_visited += 1
+        # update the # points metrics as appropriate
+        if len(spaced_body_points) < self.min_points:
+            self.min_points = len(spaced_body_points)
+        if len(spaced_body_points) > self.max_points:
+            self.max_points = len(spaced_body_points)
 
-        if len(body_points) < self.min_points:
-            self.min_points = len(body_points)
-        if len(body_points) > self.max_points:
-            self.max_points = len(body_points)
+        self.body_points.append(spaced_body_points)
 
-        print(f"found {len(body_points)} points")
 
-        self.body_points.append(body_points)
+
+        # N_ROWS, N_COLS = skeleton_frame.shape
+        # visited = np.zeros((N_ROWS, N_COLS))
+        # n_visited = 1
+        # body_points = [self.head_positions[-1]]
+        # explore_points = [self.head_positions[-1]]
+        # visited[self.head_positions[-1][0]][self.head_positions[-1][1]] = 1
+        #
+        # # set a search radius around each point for the points nearby it
+        # RADIUS = 3
+        # steps = list(itertools.product(range(-RADIUS, RADIUS + 1), repeat=2))
+        #
+        # # travel along the worm from the head for a certain segment length and place a body point at the end until
+        # # we reach the desired amount of body points or we run out of worm to travel
+        # segment_length = 0
+        # while len(explore_points) > 0:
+        #     curr_point = explore_points.pop()
+        #
+        #     # get the next point in the worm
+        #     close_points = []
+        #     for row_step, col_step in steps:
+        #         search_row, search_col = curr_point[0] + row_step, curr_point[1] + col_step
+        #         if 0 <= search_row < N_ROWS and 0 <= search_col < N_COLS:
+        #             if (skeleton_frame[search_row][search_col] == 255) and (visited[search_row][search_col] == 0):
+        #                 p = [search_row, search_col]
+        #                 close_points.append([math.dist(curr_point, p), p])
+        #
+        #     if len(close_points) > 0:
+        #         sorted_close = sorted(close_points, key=lambda x: x[0])
+        #         next_point = sorted_close[0][1]
+        #         explore_points.append(next_point)
+        #         step_dist = math.dist(curr_point, next_point)
+        #         segment_length += step_dist
+        #
+        #         # see if we have reached the appropriate segment length
+        #         if segment_length >= spacing:
+        #             # compute the overshoot
+        #             overshoot = segment_length - spacing
+        #             adjustment_vec = (overshoot / segment_length) * np.subtract(curr_point, next_point)
+        #             body_points.append(next_point + adjustment_vec)
+        #             segment_length = overshoot
+        #
+        #         visited[curr_point[0]][curr_point[1]] = 1
+        #         n_visited += 1
+        #
+        # if len(body_points) < self.min_points:
+        #     self.min_points = len(body_points)
+        # if len(body_points) > self.max_points:
+        #     self.max_points = len(body_points)
+        #
+        # print(f"found {len(body_points)} points")
+        #
+        # self.body_points.append(body_points)
 
     def to_csv(self, filename=""):
         """
@@ -454,6 +508,18 @@ class Worm:
                 columns = [self.runtime[i][label] for label in components]
                 writer.writerow([str(i)] + columns)
 
+    def save_img(self, data, name='', i=0):
+        if len(name) == 0:
+            name = "data"
+
+        new_p = Image.fromarray(data)
+        if new_p.mode != 'RGB':
+            new_p = new_p.convert('RGB')
+
+        ending = "%02d.png" % i
+        formatted_name = name + ending
+        new_p.save(formatted_name)
+
     def save_body_points(self, i):
         """
         Saves the segmented centre body points into an image.
@@ -470,7 +536,7 @@ class Worm:
         new_p = Image.fromarray(frame)
         if new_p.mode != 'RGB':
             new_p = new_p.convert('RGB')
-        new_p.save("body_points%02d.png" % i)
+        new_p.save("temp_processed_frames/body_points%02d.png" % i)
 
     def save_sorted_body(self):
         """
@@ -491,7 +557,7 @@ class Worm:
         new_p = Image.fromarray(frame)
         if new_p.mode != 'RGB':
             new_p = new_p.convert('RGB')
-        new_p.save("sorted_body%02d.png" % len(self.sorted_body))
+        new_p.save("temp_processed_frames/sorted_body%02d.png" % len(self.sorted_body))
 
 def save_head_guess(head_guess, i):
     frame = np.zeros((1024, 1024))
