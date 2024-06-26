@@ -93,18 +93,18 @@ def get_masked_video(data_dir: str, fname: str, save: str, init_head_pos: list[i
         i += 1
         cv2.destroyAllWindows()
 
-    subprocess.call([
-        'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-        'spline_points.mp4'
-    ])
-    subprocess.call([
-        'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
-        'sorted_body_vid.mp4'
-    ])
-    os.chdir(f'{data_dir}/temp_processed_frames')
-    for file_name in glob.glob("*.png"):
-        os.remove(file_name)
-    os.chdir(data_dir)
+    # subprocess.call([
+    #     'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/file%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+    #     'spline_points.mp4'
+    # ])
+    # subprocess.call([
+    #     'ffmpeg', '-framerate', '8', '-i', 'temp_processed_frames/sorted_body%02d.png', '-r', '30', '-pix_fmt', 'yuv420p',
+    #     'sorted_body_vid.mp4'
+    # ])
+    # os.chdir(f'{data_dir}/temp_processed_frames')
+    # for file_name in glob.glob("*.png"):
+    #     os.remove(file_name)
+    # os.chdir(data_dir)
 
     cap.release()
     out.release()
@@ -132,10 +132,10 @@ os.chdir(data_dir)#\\Bad alignment\\h5_20220922_3 6000")
 #     os.remove(file_name)
 # os.chdir(data_dir)
 
-fp="recording_04242024_143948_10mins.avi" # r"E:\Behaviour 23\New folder\recording_04242024_135452_15minutes.avi"
-output_name = 'stable'
+fp="recording_04242024_135452_15minutes.avi" # r"E:\Behaviour 23\New folder\recording_04242024_135452_15minutes.avi"
+output_name = 'test'
 start_frame = 0
-end_frame = 10
+end_frame = 1
 initial_head_position = [800, 500]
 
 worm = get_masked_video(data_dir, fp, f'{output_name}.mp4', initial_head_position, start_frame, end_frame, segnet)

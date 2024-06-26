@@ -23,24 +23,11 @@ def get_image(video,frame):
     original_dim = arr.shape
     return arr
 
-
-def threshold(image, thresh):
+def invert(image):
     """
-    Given an image, thresholds that image so that values > thresh are set to 255, values <= thresh are set to 0.
+    Inverts a binary image.
     """
-    for i in range(len(image)):
-        for j in range(len(image[0])):
-            if image[i][j] > thresh:
-                image[i][j] = 255
-            #     image[i][j] *= 2
-            # if image[i][j] > 255:
-            #     image[i][j] = 255
-    return image
-    # return cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, \
-    #                      cv2.THRESH_BINARY_INV, 11, 2)
-    # ret2, th2 = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # return th2
-
+    return 255 - np.asarray(image)
 
 def ChooseLargestBlob(image):
 
@@ -101,7 +88,7 @@ def skeletonize(filled_outline):
     skeleton[0] = 0
     skeleton[:,-1] = 0
     skeleton[:,0] = 0
-    return skeleton
+    return skeleton, outline
 
 
 def erode(image, erode_param = 21):

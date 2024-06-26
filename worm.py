@@ -8,6 +8,9 @@ import skimage.util
 import cv2
 from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import CubicSpline
+from scipy.ndimage import gaussian_filter
+# from skimage.morphology import skeletonize, thin
+import skimage.morphology
 import csv
 import sys
 from datetime import datetime
@@ -71,72 +74,73 @@ class Worm:
         thresh_frame[thresh_indices] = 255 # slow: use double for loop manual thresholding
         thresh_end = process_time()
 
-        # segment the frame
-        cnn_start = process_time()
-        skeleton_frame = self.get_mask(thresh_frame)
-        cnn_end = process_time()
+        self.get_mask_no_CNN(thresh_frame)
+        # # segment the frame
+        # cnn_start = process_time()
+        # skeleton_frame = self.get_mask(thresh_frame)
+        # cnn_end = process_time()
+        #
+        # # attempt to grab the head
+        # head_grab_start = process_time()
+        # ret = self.get_head(skeleton_frame)
+        # head_grab_end = process_time()
+        #
+        # # handle the case when it is the first frame and user chose to skip to next frame
+        # if ret == 1:
+        #     return 1
+        #
+        # # the case when the head tracking reported an error due to the new head position being too far from the old one
+        # backups, prev = [augment_frame], thresh_frame
+        # while ret == -1 and len(backups) > 0:
+        #     backup = backups.pop()
+        #     # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
+        #     print("Frame errored, trying again with backup frame...")
+        #     self.save_img(prev, f"fail_frames/fail_frame_{len(backups)}_", len(self.head_positions))
+        #     skeleton_frame = self.get_mask(backup)
+        #     ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
+        #     prev = backup
+        #
+        # # if there is still an error and the user still wants to skip, then we must return
+        # if ret == -1:
+        #     self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
+        #     return -1
+        #
+        # # otherwise proceed with the rest of the body update
+        # body_sort_start = process_time()
+        # self.body_sort(skeleton_frame)
+        # body_sort_end = process_time()
+        #
+        # # get body points using interpolation
+        # interp_start = process_time()
+        # self.get_skeleton(spacing)
+        #
+        # # select the x and y coordinates respectively to plot
+        # f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
+        # interp_end = process_time()
+        #
+        # file_save_start = process_time()
+        # plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9)
+        # # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
+        # ax = plt.gca()
+        # ax.set_xlim([0, 1024])
+        # ax.set_ylim([0, 1024])
+        #
+        # plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
+        # plt.clf()
+        # file_save_end = process_time()
+        #
+        # # track runtime of each component
+        # times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
+        #          (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
+        #          (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
+        #          (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
+        # times_dict = {stage: time for time, stage in times}
+        # self.runtime.append(times_dict)
+        # self.add_points_csv()
 
-        # attempt to grab the head
-        head_grab_start = process_time()
-        ret = self.get_head(skeleton_frame)
-        head_grab_end = process_time()
-
-        # handle the case when it is the first frame and user chose to skip to next frame
-        if ret == 1:
-            return 1
-
-        # the case when the head tracking reported an error due to the new head position being too far from the old one
-        backups, prev = [augment_frame], thresh_frame
-        while ret == -1 and len(backups) > 0:
-            backup = backups.pop()
-            # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
-            print("Frame errored, trying again with backup frame...")
-            self.save_img(prev, f"fail_frames/fail_frame_{len(backups)}_", len(self.head_positions))
-            skeleton_frame = self.get_mask(backup)
-            ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
-            prev = backup
-
-        # if there is still an error and the user still wants to skip, then we must return
-        if ret == -1:
-            self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
-            return -1
-
-        # otherwise proceed with the rest of the body update
-        body_sort_start = process_time()
-        self.body_sort(skeleton_frame)
-        body_sort_end = process_time()
-
-        # get body points using interpolation
-        interp_start = process_time()
-        self.get_skeleton(spacing)
-
-        # select the x and y coordinates respectively to plot
-        f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
-        interp_end = process_time()
-
-        file_save_start = process_time()
-        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9)
-        # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
-        ax = plt.gca()
-        ax.set_xlim([0, 1024])
-        ax.set_ylim([0, 1024])
-
-        plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
-        plt.clf()
-        file_save_end = process_time()
-
-        # track runtime of each component
-        times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
-                 (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
-                 (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
-                 (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
-        times_dict = {stage: time for time, stage in times}
-        self.runtime.append(times_dict)
-        self.add_points_csv()
+        #
+        # print(f'Runtime of pipeline parts: {times}')
         self.cframe += 1
-
-        print(f'Runtime of pipeline parts: {times}')
-
         return thresh_frame
 
     def get_mask(self, original_arr: np.array):
@@ -159,14 +163,92 @@ class Worm:
 
         Assume that the input frame, original_arr, has been thresholded so that the worm (among other things) is 0
         """
-        # flip image
-        flipped = np.zeros(original_arr.shape)
-        white_pix = original_arr == 255
-        black_pix = original_arr == 0
-        flipped[white_pix] = 0
-        flipped[black_pix] = 255
+        fill_start = process_time()
+        connectivity = 4
+        base_arr = original_arr.astype(np.uint8)
 
-        # TODO: finish this function
+        # flip image, so the worm (and others) correspond to white pixels, everything else black
+        flipped = (invert(base_arr)).astype(np.uint8)
+        flipped[0], flipped[1], flipped[-1], flipped[-2] = 0, 0, 0, 0
+        flipped[:, 0], flipped[:, 1], flipped[:, -1], flipped[:, -2] = 0, 0, 0, 0
+
+        # remove the background from the base array
+        cv2.floodFill(flipped, None, (0, 0), 255)
+        base_arr = invert(flipped)
+        small_comps = np.zeros(base_arr.shape, dtype=np.uint8)
+        small_comps[base_arr > 100] = 255
+
+        flipped = (invert(original_arr)).astype(np.uint8)
+        n_comp, output, stats, centroids = cv2.connectedComponentsWithStats(small_comps, connectivity, cv2.CV_32S)
+
+        # get all components who are smaller than worm size (these are all the "holes", so to speak)
+        sizes = stats[1:, cv2.CC_STAT_AREA]
+        print(sizes)
+        small_components = np.zeros(output.shape)
+        small_component_indices = np.argwhere(sizes < 1500) + 1
+        small_components[np.isin(output, small_component_indices)] = 1
+
+        # fill the small holes in
+        binary_worm = np.zeros(flipped.shape)
+        binary_worm[flipped > 0] = 1
+        combined = np.bitwise_xor(binary_worm.astype(int), small_components.astype(int)) * 255
+        fill_end = process_time()
+
+        # trim the edges again, grab the worm
+        get_worm_start = process_time()
+        crop_width = 20
+        for i in range(crop_width):
+            combined[i], combined[-(i + 1)]  = 0, 0
+            combined[:, i], combined[:, -(i + 1)] = 0, 0
+        self.save_img(combined, "cropped", self.cframe)
+        worm_grab = ChooseLargestBlob(combined.astype(np.uint8))
+        get_worm_end = process_time()
+
+        # smooth the worm
+        smooth_start = process_time()
+        blur_level = 7
+        blur = gaussian_filter(worm_grab, blur_level)
+        smooth = np.zeros(blur.shape, dtype=np.uint8)
+        smooth[blur > 100] = 255
+        smooth_end = process_time()
+
+        # erode and get center line
+        get_skel = process_time()
+        mask_erode = erode(smooth) # erosion actually speeds skeletonization up by reducing # pixels to deal with
+        mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+        get_skel_end = process_time()
+
+        print(f"fill took {fill_end - fill_start}")
+        print(f"getting worm took {get_worm_end - get_worm_start}")
+        print(f'smooth took {smooth_end - smooth_start}')
+        print(f'skeleton took {get_skel_end - get_skel}')
+        # print(f'worm size: {worm_size}')
+        self.save_img(original_arr, "orig", self.cframe)
+        self.save_img(blur, f"blur_blur_lev{blur_level}", self.cframe)
+        self.save_img(smooth, f'smooth_blur_lev{blur_level}')
+        # self.save_img(small_components, "small components")
+        self.save_img(flipped, "inverted", self.cframe)
+        # self.save_img(mask_erode, "erode", self.cframe)
+        self.save_img(mask_skeleton, "skeleton", self.cframe)
+        # print(np.unique(output))
+        # self.save_img(output * 255 / np.max(output), "orig components scale")
+        # # flip image, so the worm (and others) correspond to white pixels, everything else black
+        # flipped = invert(original_arr)
+        #
+        # # for now, trim the edges
+        # flipped[0], flipped[1], flipped[-1], flipped[-2] = 0, 0, 0, 0
+        # flipped[:, 0], flipped[:, 1], flipped[:, -1], flipped[:, -2] = 0, 0, 0, 0
+        #
+        # # select the blob closest to the previous head position
+        # # TODO (use centroids?)
+        # # TODO finish this function
+        # # figure out a way to fill the image such that when the worm makes a loop, the loop isn't filled in
+        #
+        #
+        # mask_erode = erode(flipped)
+        # mask_erode = ChooseLargestBlob(mask_erode)
+        # mask_skeleton = skeletonize(mask_erode)
+        # return mask_skeleton
 
     def get_interp(self, ERROR_TOL=20, method=UnivariateSpline):
         """
@@ -317,7 +399,7 @@ class Worm:
             for a, b in itertools.combinations(range(len(vectors)), 2):
                 if np.dot(vectors[a], vectors[b]) < 0:
                     head_candidate = False
-                    break # slow: no break
+                    break # slow (?): no break
 
             if head_candidate:
                 head_candidates.append(point)
@@ -417,6 +499,7 @@ class Worm:
             self.max_points = len(spaced_body_points)
 
         self.body_points.append(spaced_body_points)
+
     def init_csv(self, filename=""):
         """
         Creates the csv file to be written to that saves position data of the worm in a format apt for usage in
@@ -458,42 +541,6 @@ class Worm:
 
         self.position_writer.writerow(data)
 
-    def to_csv(self, filename=""):
-        """
-        Converts the saved position data of the worm to a csv format apt for usage in
-        Ruby's UCI pipeline (as of 17/06/2024)
-        """
-        if len(filename) == 0:
-            time = datetime.now()
-            filename = f'csv_data/{time.hour}_{time.minute}_{self.src}.csv'
-
-        with open(filename, mode='w', newline='') as worm_data:
-            writer = csv.writer(worm_data, delimiter=',', quotechar="|", quoting=csv.QUOTE_MINIMAL)
-
-            writer.writerow(["Worm Data", "Center Points (um)"])
-            writer.writerow(["Sequence", self.src])
-            writer.writerow([])
-            writer.writerow(["","Worm 1"])
-
-            columns = ["Frame", "Time"]
-            for i in range(1, self.max_points + 1):
-                columns.append(f'{i}x')
-                columns.append(f'{i}y')
-
-            writer.writerow(columns)
-
-            time = 0
-            for i in range(0, len(self.body_points)):
-                data = [str(i + 1), str(time)]
-                for point in self.body_points[i]:
-                    r, c = point
-                    x = c
-                    y = 1024 - r
-                    data.append(str(x))
-                    data.append(str(y))
-                writer.writerow(data)
-                time += 1/self.fps
-
     def runtime_to_csv(self, filename=""):
         """
         Converts the runtimes of each part of the pipeline for each frame into a csv
@@ -512,7 +559,7 @@ class Worm:
                 columns = [self.runtime[i][label] for label in components]
                 writer.writerow([str(i)] + columns)
 
-    def save_img(self, data, name='', i=0):
+    def save_img(self, data, name='', i=None):
         if len(name) == 0:
             name = "data"
 
@@ -520,8 +567,11 @@ class Worm:
         if new_p.mode != 'RGB':
             new_p = new_p.convert('RGB')
 
-        ending = "%02d.png" % i
-        formatted_name = name + ending
+        formatted_name = name + ".png"
+        if i is not None:
+            ending = "%02d.png" % i
+            formatted_name = name + ending
+
         new_p.save(formatted_name)
 
     def save_body_points(self, i):
