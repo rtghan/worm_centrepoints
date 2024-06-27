@@ -87,25 +87,37 @@ class Worm:
         ret = self.get_head(skeleton_frame)
         head_grab_end = process_time()
 
-        # handle the case when it is the first frame and user chose to skip to next frame
-        if ret == 1:
-            return 1
-
         # the case when the head tracking reported an error due to the new head position being too far from the old one
-        backups, prev = [augment_frame], thresh_frame
-        while ret == -1 and len(backups) > 0:
-            backup = backups.pop()
-            # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
-            print("Frame errored, trying again with backup frame...")
-            self.save_img(prev, f"fail_frames/fail_frame_{len(backups)}_", len(self.head_positions))
-            skeleton_frame = self.get_mask(backup)
-            ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
-            prev = backup
-
-        # if there is still an error and the user still wants to skip, then we must return
+        backup_start = process_time()
         if ret == -1:
-            self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
-            return -1
+            backups = []
+            # also try the cnn
+            backups.append((augment_frame, self.get_mask, "CNN"))
+
+            # # create some alternate thresholding level frames to try
+            # thresh_step = 10
+            # n_thresh_frames = 2
+            # for i in range(n_thresh_frames):
+            #     new_thresh = np.zeros(thresh_frame.shape)
+            #     new_thresh[thresh_frame > (thresh - (i + 1) * thresh_step)] = 255
+            #     backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1) * thresh_step)}"))
+
+            prev = thresh_frame
+            # try running the backup frames and see if any of them work
+            while ret == -1 and len(backups) > 0:
+                backup, method, type = backups.pop(0)
+                print(f"Frame errored, trying again with backup frame {type}...")
+                self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", self.cframe)
+                self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
+                skeleton_frame = method(backup)
+                ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
+                prev = backup
+
+            # if there is still an error and the user still wants to skip, then we must return
+            if ret == -1:
+                self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
+                return -1
+        backup_end = process_time()
 
         # otherwise proceed with the rest of the body update
         body_sort_start = process_time()
