@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import math
 import time
+import scipy.signal
 from scipy.interpolate import UnivariateSpline, interp1d
 from scipy import interpolate
 from scipy import optimize
@@ -28,6 +29,27 @@ def invert(image):
     Inverts a binary image.
     """
     return 255 - np.asarray(image)
+
+def get_edges(image):
+    """
+    Runs an edge grabbing convolution on the image.
+    """
+    # Sobel operator
+
+    Gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+    Gy = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+
+    x = signal.convolve2d(image, Gx)
+    y = signal.convolve2d(image, Gy)
+
+    x_nonzero = x > 0
+    y_nonzero = y > 0
+
+    A = np.zeros(image.shape)
+    A[x_nonzero] = 255
+    A[y_nonzero] = 255
+
+    return A
 
 def ChooseLargestBlob(image):
 
