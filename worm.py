@@ -77,8 +77,8 @@ class Worm:
         # self.get_mask_no_CNN(thresh_frame)
         # segment the frame
         cnn_start = process_time()
-        skeleton_frame = self.get_mask(thresh_frame)
-        # skeleton_frame = self.get_mask_no_CNN(thresh_frame)
+        # skeleton_frame = self.get_mask(thresh_frame)
+        skeleton_frame = self.get_mask_no_CNN(thresh_frame)
         cnn_end = process_time()
 
         # attempt to grab the head
@@ -120,7 +120,7 @@ class Worm:
         interp_end = process_time()
 
         file_save_start = process_time()
-        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9)
+        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9, markersize=5)
         # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
         ax = plt.gca()
         ax.set_xlim([0, 1024])
@@ -217,7 +217,8 @@ class Worm:
         # erode and get center line
         get_skel = process_time()
         mask_erode = erode(smooth) # erosion actually speeds skeletonization up by reducing # pixels to deal with
-        mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+        # mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+        mask_skeleton = skeletonize(mask_erode)
         get_skel_end = process_time()
 
         # print(f"fill took {fill_end - fill_start}")
