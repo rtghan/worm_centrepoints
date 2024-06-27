@@ -66,6 +66,7 @@ class Worm:
 
         # histogram equalization
         augment_frame = cv2.equalizeHist(augment_frame)
+        self.save_img(augment_frame, "hist_eq", self.cframe)
         hist_end = process_time()
 
         # fast thresholding using numpy
