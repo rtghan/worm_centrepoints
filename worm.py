@@ -91,6 +91,7 @@ class Worm:
             return 1
 
         # the case when the head tracking reported an error due to the new head position being too far from the old one
+        backup_start = process_time()
         if ret == -1:
             backups = []
 
@@ -100,16 +101,16 @@ class Worm:
             for i in range(n_thresh_frames):
                 new_thresh = np.zeros(thresh_frame.shape)
                 new_thresh[thresh_frame > (thresh - (i + 1)*thresh_step)] = 255
-                backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {thresh - (i + 1)*thresh_step}"))
+                backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
 
             # also try the cnn
-            backups.append((augment_frame, self.get_mask))
-            prev =  thresh_frame
+            backups.append((augment_frame, self.get_mask, "CNN"))
 
+            prev =  thresh_frame
             # try running the backup frames and see if any of them work
             while ret == -1 and len(backups) > 0:
-                backup, method, type = backups.pop()
-                print("Frame errored, trying again with backup frame...")
+                backup, method, type = backups.pop(0)
+                print(f"Frame errored, trying again with backup frame {type}...")
                 self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", self.cframe)
                 self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
                 skeleton_frame = method(backup)
@@ -120,6 +121,7 @@ class Worm:
             if ret == -1:
                 self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
                 return -1
+        backup_end = process_time()
 
         # otherwise proceed with the rest of the body update
         body_sort_start = process_time()
@@ -135,7 +137,7 @@ class Worm:
         interp_end = process_time()
 
         file_save_start = process_time()
-        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9, markersize=5)
+        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9, markersize=3)
         # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
         ax = plt.gca()
         ax.set_xlim([0, 1024])
@@ -147,9 +149,10 @@ class Worm:
 
         # track runtime of each component
         times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
-                 (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
+                 (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "skeletonization"),
                  (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
-                 (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
+                 (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save"),
+                 (backup_end - backup_start, "backup")]
         times_dict = {stage: time for time, stage in times}
         self.runtime.append(times_dict)
         self.add_points_csv()
@@ -236,18 +239,19 @@ class Worm:
         mask_skeleton = skeletonize(mask_erode)
         get_skel_end = process_time()
 
-        # print(f"fill took {fill_end - fill_start}")
-        # print(f"getting worm took {get_worm_end - get_worm_start}")
-        # print(f'smooth took {smooth_end - smooth_start}')
-        # print(f'skeleton took {get_skel_end - get_skel}')
+        print(f'Skeletonization:')
+        print(f"    fill took {fill_end - fill_start}")
+        print(f"    getting worm took {get_worm_end - get_worm_start}")
+        print(f'    smooth took {smooth_end - smooth_start}')
+        print(f'    skeleton took {get_skel_end - get_skel}')
         # # print(f'worm size: {worm_size}')
         # self.save_img(original_arr, "orig", self.cframe)
         # self.save_img(blur, f"blur_blur_lev{blur_level}", self.cframe)
-        self.save_img(smooth, f'smooth_blur_lev{blur_level}', self.cframe)
+        # self.save_img(smooth, f'smooth_blur_lev{blur_level}', self.cframe)
         # # self.save_img(small_components, "small components")
         # self.save_img(flipped, "inverted", self.cframe)
         # # self.save_img(mask_erode, "erode", self.cframe)
-        self.save_img(mask_skeleton, "skeleton", self.cframe)
+        # self.save_img(mask_skeleton, "skeleton", self.cframe)
         return mask_skeleton
 
     def get_interp(self, ERROR_TOL=20, method=UnivariateSpline):
@@ -291,7 +295,7 @@ class Worm:
             if user_choice == 'Skip_frame':
                 return 1
 
-            self.head_positions.append(user_choice)
+            self.head_positions.append((int(user_choice[0]), int(user_choice[1])))
 
         # otherwise we can assume that we have the head location of the previous frame
         else:
@@ -315,7 +319,7 @@ class Worm:
                 # stop updating the worm for this frame if the user desires (choosing 'Skip Frame')
                 # if the user's choice is not "Skip Frame", then save the frame, otherwise, return -1
                 if type(user_choice) != str:
-                    self.head_positions.append(user_choice)
+                    self.head_positions.append((int(user_choice[0]), int(user_choice[1])))
                 else:
                     return -1
 
