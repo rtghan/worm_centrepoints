@@ -152,9 +152,9 @@ class Worm:
         # mask_filled = fillHoles(mask)
         mask_erode = erode(mask)
         mask_erode = ChooseLargestBlob(mask_erode)
-        mask_skeleton = skimage.morphology.skeletonize(mask_erode)
-        mask_skeleton[mask_skeleton > 0] = 255
-        # mask_skeleton = skeletonize(mask_erode)
+        # mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+        # mask_skeleton[mask_skeleton > 0] = 255
+        mask_skeleton = skeletonize(mask_erode)
         # self.save_img(mask_skeleton, "skimage skeletonize")
         # self.save_img(skeletonize(mask_erode), "cv2 skeletonize")
         return mask_skeleton
@@ -404,11 +404,18 @@ class Worm:
         self.end_time = np.zeros(skeleton_frame.shape)
 
         # TODO: Fix the dfs/body sorting, for some reason at the end we get random points from the middle?
-        sys.setrecursionlimit(2000)
-        self._dfs(self.head_positions[-1], skeleton_frame)
+
+        sys.setrecursionlimit(3000)
+        try:
+            self._dfs(self.head_positions[-1], skeleton_frame)
+        except RecursionError:
+            return -1
         sys.setrecursionlimit(1000)
+
         self.sorted_body[-1].reverse()
         self.save_sorted_body()
+
+        return 0
 
     def _dfs(self, curr_point, skeleton_frame):
         N_ROWS, N_COLS = skeleton_frame.shape
@@ -427,10 +434,10 @@ class Worm:
         close_points = []
         for row_step, col_step in steps:
             search_row, search_col = r + row_step, c + col_step
-            if 0 <= search_row < N_ROWS and 0 <= search_col < N_COLS:
+            if (0 <= search_row < N_ROWS) and (0 <= search_col < N_COLS):
                 if (skeleton_frame[search_row][search_col] > 0) and (self.queued[search_row][search_col] == 0):
                     self.queued[search_row][search_col] = 1
-                    p = [search_row, search_col]
+                    p = (search_row, search_col)
                     close_points.append([math.dist(curr_point, p), p])
 
         # visit neighbours in order of closeness
