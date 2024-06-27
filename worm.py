@@ -67,6 +67,7 @@ class Worm:
         # histogram equalization
         augment_frame = cv2.equalizeHist(augment_frame)
         hist_end = process_time()
+        self.save_img(augment_frame, "hist_eq", self.cframe)
 
         # fast thresholding using numpy
         thresh_frame = np.asarray(augment_frame)
@@ -94,6 +95,8 @@ class Worm:
         backup_start = process_time()
         if ret == -1:
             backups = []
+            # also try the cnn
+            backups.append((augment_frame, self.get_mask, "CNN"))
 
             # create some alternate thresholding level frames to try
             thresh_step = 10
@@ -102,9 +105,6 @@ class Worm:
                 new_thresh = np.zeros(thresh_frame.shape)
                 new_thresh[thresh_frame > (thresh - (i + 1)*thresh_step)] = 255
                 backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
-
-            # also try the cnn
-            backups.append((augment_frame, self.get_mask, "CNN"))
 
             prev =  thresh_frame
             # try running the backup frames and see if any of them work
