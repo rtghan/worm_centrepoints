@@ -88,7 +88,7 @@ def skeletonize(filled_outline):
     skeleton[0] = 0
     skeleton[:,-1] = 0
     skeleton[:,0] = 0
-    return skeleton, outline
+    return skeleton
 
 
 def erode(image, erode_param = 21):

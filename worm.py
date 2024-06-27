@@ -74,72 +74,72 @@ class Worm:
         thresh_frame[thresh_indices] = 255 # slow: use double for loop manual thresholding
         thresh_end = process_time()
 
-        self.get_mask_no_CNN(thresh_frame)
-        # # segment the frame
-        # cnn_start = process_time()
-        # skeleton_frame = self.get_mask(thresh_frame)
-        # cnn_end = process_time()
-        #
-        # # attempt to grab the head
-        # head_grab_start = process_time()
-        # ret = self.get_head(skeleton_frame)
-        # head_grab_end = process_time()
-        #
-        # # handle the case when it is the first frame and user chose to skip to next frame
-        # if ret == 1:
-        #     return 1
-        #
-        # # the case when the head tracking reported an error due to the new head position being too far from the old one
-        # backups, prev = [augment_frame], thresh_frame
-        # while ret == -1 and len(backups) > 0:
-        #     backup = backups.pop()
-        #     # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
-        #     print("Frame errored, trying again with backup frame...")
-        #     self.save_img(prev, f"fail_frames/fail_frame_{len(backups)}_", len(self.head_positions))
-        #     skeleton_frame = self.get_mask(backup)
-        #     ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
-        #     prev = backup
-        #
-        # # if there is still an error and the user still wants to skip, then we must return
-        # if ret == -1:
-        #     self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
-        #     return -1
-        #
-        # # otherwise proceed with the rest of the body update
-        # body_sort_start = process_time()
-        # self.body_sort(skeleton_frame)
-        # body_sort_end = process_time()
-        #
-        # # get body points using interpolation
-        # interp_start = process_time()
-        # self.get_skeleton(spacing)
-        #
-        # # select the x and y coordinates respectively to plot
-        # f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
-        # interp_end = process_time()
-        #
-        # file_save_start = process_time()
-        # plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9)
-        # # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
-        # ax = plt.gca()
-        # ax.set_xlim([0, 1024])
-        # ax.set_ylim([0, 1024])
-        #
-        # plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
-        # plt.clf()
-        # file_save_end = process_time()
-        #
-        # # track runtime of each component
-        # times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
-        #          (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
-        #          (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
-        #          (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
-        # times_dict = {stage: time for time, stage in times}
-        # self.runtime.append(times_dict)
-        # self.add_points_csv()
+        # self.get_mask_no_CNN(thresh_frame)
+        # segment the frame
+        cnn_start = process_time()
+        skeleton_frame = self.get_mask(thresh_frame)
+        # skeleton_frame = self.get_mask_no_CNN(thresh_frame)
+        cnn_end = process_time()
 
-        #
-        # print(f'Runtime of pipeline parts: {times}')
+        # attempt to grab the head
+        head_grab_start = process_time()
+        ret = self.get_head(skeleton_frame)
+        head_grab_end = process_time()
+
+        # handle the case when it is the first frame and user chose to skip to next frame
+        if ret == 1:
+            return 1
+
+        # the case when the head tracking reported an error due to the new head position being too far from the old one
+        backups, prev = [augment_frame], thresh_frame
+        while ret == -1 and len(backups) > 0:
+            backup = backups.pop()
+            # try again with the non-thresholded frame, which seems to be more stable, albeit more prone to body spikes
+            print("Frame errored, trying again with backup frame...")
+            self.save_img(prev, f"fail_frames/fail_frame_{len(backups)}_", len(self.head_positions))
+            skeleton_frame = self.get_mask(backup)
+            ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
+            prev = backup
+
+        # if there is still an error and the user still wants to skip, then we must return
+        if ret == -1:
+            self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
+            return -1
+
+        # otherwise proceed with the rest of the body update
+        body_sort_start = process_time()
+        self.body_sort(skeleton_frame)
+        body_sort_end = process_time()
+
+        # get body points using interpolation
+        interp_start = process_time()
+        self.get_skeleton(spacing)
+
+        # select the x and y coordinates respectively to plot
+        f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
+        interp_end = process_time()
+
+        file_save_start = process_time()
+        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9)
+        # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
+        ax = plt.gca()
+        ax.set_xlim([0, 1024])
+        ax.set_ylim([0, 1024])
+
+        plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
+        plt.clf()
+        file_save_end = process_time()
+
+        # track runtime of each component
+        times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
+                 (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "cnn"),
+                 (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
+                 (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save")]
+        times_dict = {stage: time for time, stage in times}
+        self.runtime.append(times_dict)
+        self.add_points_csv()
+
+        print(f'Runtime of pipeline parts: {times}')
         self.cframe += 1
         return thresh_frame
 
@@ -152,8 +152,11 @@ class Worm:
         # mask_filled = fillHoles(mask)
         mask_erode = erode(mask)
         mask_erode = ChooseLargestBlob(mask_erode)
-        mask_skeleton = skeletonize(mask_erode)
-
+        mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+        mask_skeleton[mask_skeleton > 0] = 255
+        # mask_skeleton = skeletonize(mask_erode)
+        # self.save_img(mask_skeleton, "skimage skeletonize")
+        # self.save_img(skeletonize(mask_erode), "cv2 skeletonize")
         return mask_skeleton
 
     def get_mask_no_CNN(self, original_arr: np.array):
@@ -172,7 +175,7 @@ class Worm:
         flipped[0], flipped[1], flipped[-1], flipped[-2] = 0, 0, 0, 0
         flipped[:, 0], flipped[:, 1], flipped[:, -1], flipped[:, -2] = 0, 0, 0, 0
 
-        # remove the background from the base array
+        # remove the background from the base array (ignore the error, it comes from the lack of typing)
         cv2.floodFill(flipped, None, (0, 0), 255)
         base_arr = invert(flipped)
         small_comps = np.zeros(base_arr.shape, dtype=np.uint8)
@@ -183,7 +186,6 @@ class Worm:
 
         # get all components who are smaller than worm size (these are all the "holes", so to speak)
         sizes = stats[1:, cv2.CC_STAT_AREA]
-        print(sizes)
         small_components = np.zeros(output.shape)
         small_component_indices = np.argwhere(sizes < 1500) + 1
         small_components[np.isin(output, small_component_indices)] = 1
@@ -200,7 +202,7 @@ class Worm:
         for i in range(crop_width):
             combined[i], combined[-(i + 1)]  = 0, 0
             combined[:, i], combined[:, -(i + 1)] = 0, 0
-        self.save_img(combined, "cropped", self.cframe)
+        # self.save_img(combined, "cropped", self.cframe)
         worm_grab = ChooseLargestBlob(combined.astype(np.uint8))
         get_worm_end = process_time()
 
@@ -218,37 +220,19 @@ class Worm:
         mask_skeleton = skimage.morphology.skeletonize(mask_erode)
         get_skel_end = process_time()
 
-        print(f"fill took {fill_end - fill_start}")
-        print(f"getting worm took {get_worm_end - get_worm_start}")
-        print(f'smooth took {smooth_end - smooth_start}')
-        print(f'skeleton took {get_skel_end - get_skel}')
-        # print(f'worm size: {worm_size}')
-        self.save_img(original_arr, "orig", self.cframe)
-        self.save_img(blur, f"blur_blur_lev{blur_level}", self.cframe)
-        self.save_img(smooth, f'smooth_blur_lev{blur_level}')
-        # self.save_img(small_components, "small components")
-        self.save_img(flipped, "inverted", self.cframe)
-        # self.save_img(mask_erode, "erode", self.cframe)
-        self.save_img(mask_skeleton, "skeleton", self.cframe)
-        # print(np.unique(output))
-        # self.save_img(output * 255 / np.max(output), "orig components scale")
-        # # flip image, so the worm (and others) correspond to white pixels, everything else black
-        # flipped = invert(original_arr)
-        #
-        # # for now, trim the edges
-        # flipped[0], flipped[1], flipped[-1], flipped[-2] = 0, 0, 0, 0
-        # flipped[:, 0], flipped[:, 1], flipped[:, -1], flipped[:, -2] = 0, 0, 0, 0
-        #
-        # # select the blob closest to the previous head position
-        # # TODO (use centroids?)
-        # # TODO finish this function
-        # # figure out a way to fill the image such that when the worm makes a loop, the loop isn't filled in
-        #
-        #
-        # mask_erode = erode(flipped)
-        # mask_erode = ChooseLargestBlob(mask_erode)
-        # mask_skeleton = skeletonize(mask_erode)
-        # return mask_skeleton
+        # print(f"fill took {fill_end - fill_start}")
+        # print(f"getting worm took {get_worm_end - get_worm_start}")
+        # print(f'smooth took {smooth_end - smooth_start}')
+        # print(f'skeleton took {get_skel_end - get_skel}')
+        # # print(f'worm size: {worm_size}')
+        # self.save_img(original_arr, "orig", self.cframe)
+        # self.save_img(blur, f"blur_blur_lev{blur_level}", self.cframe)
+        # self.save_img(smooth, f'smooth_blur_lev{blur_level}')
+        # # self.save_img(small_components, "small components")
+        # self.save_img(flipped, "inverted", self.cframe)
+        # # self.save_img(mask_erode, "erode", self.cframe)
+        # self.save_img(mask_skeleton, "skeleton", self.cframe)
+        return mask_skeleton
 
     def get_interp(self, ERROR_TOL=20, method=UnivariateSpline):
         """
@@ -383,7 +367,7 @@ class Worm:
             for row_step, col_step in steps:
                 search_row, search_col = point[0] + row_step, point[1] + col_step
                 if 0 <= search_row < N_ROWS and 0 <= search_col < N_COLS:
-                    if skeleton_frame[search_row][search_col] == 255:
+                    if skeleton_frame[search_row][search_col] > 0:
                         nearby_points.append((search_row, search_col))
 
             # compute the vectors that go from the point to its nearby neighbours
@@ -424,7 +408,7 @@ class Worm:
         self._dfs(self.head_positions[-1], skeleton_frame)
         sys.setrecursionlimit(1000)
         self.sorted_body[-1].reverse()
-        # self.save_sorted_body()
+        self.save_sorted_body()
 
     def _dfs(self, curr_point, skeleton_frame):
         N_ROWS, N_COLS = skeleton_frame.shape
@@ -444,7 +428,7 @@ class Worm:
         for row_step, col_step in steps:
             search_row, search_col = r + row_step, c + col_step
             if 0 <= search_row < N_ROWS and 0 <= search_col < N_COLS:
-                if (skeleton_frame[search_row][search_col] == 255) and (self.queued[search_row][search_col] == 0):
+                if (skeleton_frame[search_row][search_col] > 0) and (self.queued[search_row][search_col] == 0):
                     self.queued[search_row][search_col] = 1
                     p = [search_row, search_col]
                     close_points.append([math.dist(curr_point, p), p])
