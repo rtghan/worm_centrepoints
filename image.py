@@ -28,7 +28,9 @@ def invert(image):
     """
     Inverts a binary image.
     """
-    return 255 - np.asarray(image)
+    inversion = np.zeros(image.shape)
+    inversion[image == 0] = 255
+    return inversion
 
 def get_edges(image):
     """
