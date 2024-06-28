@@ -282,50 +282,17 @@ class Worm:
         Given a skeleton frame, returns a list of the fork points.
         """
         skeleton_points = np.column_stack(np.where(skeleton_frame != 0))
+        bin_frame = skeleton_frame / 255
 
-        a_start = process_time()
-        N_c_mat = np.zeros(skeleton_frame.shape)
-        N_b_mat_a = np.zeros(skeleton_frame.shape)
+        N_c_mat = np.zeros(bin_frame.shape)
         for r, c in skeleton_points:
-            N_c_mat[r][c] = self.N_c(skeleton_frame, (r, c))
-            N_b_mat_a[r][c] = self.N_b(skeleton_frame, (r, c))
-        N_b_mat_a = N_b_mat_a / 255
-        a_end = process_time()
+            N_c_mat[r][c] = self.N_c(bin_frame, (r, c))
 
-        b_start = process_time()
-        N_c_mat = np.zeros(skeleton_frame.shape)
-        N_b_mat_b = self.N_b_mat(skeleton_frame)
-        for r, c in skeleton_points:
-            N_c_mat[r][c] = self.N_c(skeleton_frame, (r, c))
-        b_end = process_time()
-
-        print(f'point by point: {a_end - a_start}')
-        print(f'convolve: {b_end - b_start}')
-        print(f'methods same: {np.array_equal(N_b_mat_b, N_b_mat_a)}')
-
-        mat_start = process_time()
-        S_1 = np.zeros(skeleton_frame.shape)
+        S_1 = np.zeros(bin_frame.shape)
         S_1[N_c_mat >= 3] = 1
-        S_2 = np.zeros(skeleton_frame.shape)
-        S_2[N_b_mat_a >= 4] = 1
-        S_n_mat = np.bitwise_or(S_1.astype(int), S_2.astype(int))
-        S_n = np.column_stack(np.where(S_n_mat != 0))
-        mat_end = process_time()
 
-        by_point_start = process_time()
-        S_n_points = []
-        for r, c in skeleton_points:
-            if N_c_mat[r][c] >= 3:
-                S_n_points.append((r, c))
-            if N_b_mat_a[r][c] >= 4:
-                S_n_points.append((r, c))
-        by_point_end = process_time()
-
-        print(f'array mask: {mat_end - mat_start}')
-        print(f'point by point: {by_point_end - by_point_start}')
-        print(f'methods equal: {np.array_equal(S_n_points, S_n)}')
-
-        self.save_img(skeleton_frame, "fork points", points_of_interest=S_n)
+        self.save_img(skeleton_frame, "forks", points_of_interest=np.column_stack(np.where(S_1 != 0)))
+        return np.column_stack(np.where(S_1 != 0))
 
     def N_c(self, skeleton_frame, point):
         """
@@ -346,20 +313,11 @@ class Worm:
         """
         Computes N_b(p) (# N colored points) for p point as outlined in https://ieeexplore.ieee.org/document/799914
         Assume skeleton_frame is padded and binarized, so no point touches a border, and colored points have a
-        value of 255.
+        value of 1.
         """
         r, c = point
         local = skeleton_frame[r - 1: r + 2, c - 1: c + 2]
-        return (np.sum(local) - skeleton_frame[r][c])
-
-    def N_b_mat(self, skeleton_frame):
-        """
-        Computes a matrix A where A[i][j] corresponds to N_b(p_ij) where p_ij is the point at (i, j) in the skeleton
-        frame.
-        N_b being the # of coloured 8-connectivity neighbours, as outlined in https://ieeexplore.ieee.org/document/799914
-        """
-        ker = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
-        return signal.convolve2d(skeleton_frame, ker, mode="same") / 255
+        return (np.sum(local) - 1)
 
     def get_head(self, skeleton_frame, ERROR_TOL=80, backups = True):
         """
