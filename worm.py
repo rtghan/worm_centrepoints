@@ -175,7 +175,7 @@ class Worm:
         # self.save_img(skeletonize(mask_erode), "cv2 skeletonize")
         return mask_skeleton
 
-    def get_mask_no_CNN(self, original_arr: np.array):
+    def get_mask_no_CNN(self, original_arr: np.array, use_skimage: bool = False):
         """
         Takes a frame from the video, and attempts to use purely image processing methods to
         get the skeletonized version.
@@ -233,8 +233,12 @@ class Worm:
         # erode and get center line
         get_skel = process_time()
         mask_erode = erode(smooth) # erosion actually speeds skeletonization up by reducing # pixels to deal with
-        # mask_skeleton = skimage.morphology.skeletonize(mask_erode)
-        mask_skeleton = skeletonize(mask_erode)
+
+        if use_skimage:
+            mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+        else:
+            mask_skeleton = skeletonize(mask_erode)
+
         get_skel_end = process_time()
 
         print(f'Skeletonization:')
