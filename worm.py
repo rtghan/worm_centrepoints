@@ -75,7 +75,6 @@ class Worm:
         thresh_frame[thresh_indices] = 255 # slow: use double for loop manual thresholding
         thresh_end = process_time()
 
-        # self.get_mask_no_CNN(thresh_frame)
         # segment the frame
         cnn_start = process_time()
         # skeleton_frame = self.get_mask(thresh_frame)
@@ -95,8 +94,6 @@ class Worm:
         backup_start = process_time()
         if ret == -1:
             backups = []
-            # also try the cnn
-            backups.append((augment_frame, self.get_mask, "CNN"))
 
             # create some alternate thresholding level frames to try
             thresh_step = 10
@@ -107,6 +104,10 @@ class Worm:
                 backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
 
             prev =  thresh_frame
+
+            # also try the cnn
+            backups.append((augment_frame, self.get_mask, "CNN"))
+
             # try running the backup frames and see if any of them work
             while ret == -1 and len(backups) > 0:
                 backup, method, type = backups.pop(0)
