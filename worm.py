@@ -66,6 +66,7 @@ class Worm:
 
         # histogram equalization
         augment_frame = cv2.equalizeHist(augment_frame)
+        self.save_img(augment_frame, "hist_eq", self.cframe)
         hist_end = process_time()
         self.save_img(augment_frame, "hist_eq", self.cframe)
 
@@ -85,10 +86,6 @@ class Worm:
         head_grab_start = process_time()
         ret = self.get_head(skeleton_frame)
         head_grab_end = process_time()
-
-        # handle the case when it is the first frame and user chose to skip to next frame
-        if ret == 1:
-            return 1
 
         # the case when the head tracking reported an error due to the new head position being too far from the old one
         backup_start = process_time()
