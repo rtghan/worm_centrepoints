@@ -77,6 +77,7 @@ class Worm:
         large_blobs = get_large_blobs(invert(thresh_frame))
         for i in range(len(large_blobs)):
             self.save_img(large_blobs[i], f"blob_{i}_", self.cframe)
+            self.save_img(self.get_mask_no_CNN(large_blobs[i]), f"skeleton_{i}_", self.cframe)
         # # segment the frame
         # cnn_start = process_time()
         # # skeleton_frame = self.get_mask(thresh_frame)
@@ -198,7 +199,6 @@ class Worm:
         small_comps = np.zeros(base_arr.shape, dtype=np.uint8)
         small_comps[base_arr > 100] = 255
 
-        flipped = (invert(original_arr)).astype(np.uint8)
         n_comp, output, stats, centroids = cv2.connectedComponentsWithStats(small_comps, connectivity, cv2.CV_32S)
 
         # get all components who are smaller than worm size (these are all the "holes", so to speak)
@@ -208,6 +208,7 @@ class Worm:
         small_components[np.isin(output, small_component_indices)] = 1
 
         # fill the small holes in
+        flipped = (invert(original_arr)).astype(np.uint8)
         binary_worm = np.zeros(flipped.shape)
         binary_worm[flipped > 0] = 1
         combined = np.bitwise_xor(binary_worm.astype(int), small_components.astype(int)) * 255
