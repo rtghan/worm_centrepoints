@@ -308,7 +308,7 @@ class Worm:
         S_1[N_c_mat >= 3] = 1
         S_2 = np.zeros(skeleton_frame.shape)
         S_2[N_b_mat_a >= 4] = 1
-        S_n_mat = np.bitwise_or(S_1, S_2)
+        S_n_mat = np.bitwise_or(S_1.astype(int), S_2.astype(int))
         S_n = np.column_stack(np.where(S_n_mat != 0))
         mat_end = process_time()
 
