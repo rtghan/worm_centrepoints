@@ -52,6 +52,12 @@ def get_edges(image):
 
     return A
 
+def get_large_blobs(image):
+    """
+    Given a binary image, returns a list of images that are only the largest blobs.
+    """
+    connectivity = 4
+
 def ChooseLargestBlob(image):
 
     '''
