@@ -56,7 +56,22 @@ def get_large_blobs(image):
     """
     Given a binary image, returns a list of images that are only the largest blobs.
     """
+    image = image.astype(np.uint8)
     connectivity = 4
+    n_comp, output, stats, centroids = cv2.connectedComponentsWithStats(image, connectivity, cv2.CV_32S)
+
+    sizes = stats[1:, cv2.CC_STAT_AREA]
+
+    large_size = 50000
+    large_component_labels = np.argwhere(sizes > 50000) + 1
+    large_components = []
+
+    for label in large_component_labels:
+        large_component = np.zeros(image.shape)
+        large_component[output == label] = 255
+        large_components.append(large_component)
+
+    return large_components
 
 def ChooseLargestBlob(image):
 
