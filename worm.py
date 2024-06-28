@@ -66,9 +66,7 @@ class Worm:
 
         # histogram equalization
         augment_frame = cv2.equalizeHist(augment_frame)
-        self.save_img(augment_frame, "hist_eq", self.cframe)
         hist_end = process_time()
-        self.save_img(augment_frame, "hist_eq", self.cframe)
 
         # fast thresholding using numpy
         thresh_frame = np.asarray(augment_frame)
@@ -76,6 +74,9 @@ class Worm:
         thresh_frame[thresh_indices] = 255 # slow: use double for loop manual thresholding
         thresh_end = process_time()
 
+        large_blobs = get_large_blobs(invert(thresh_frame))
+        for i in range(len(large_blobs)):
+            self.save_img(large_blobs[i], f"blob_{i}_", self.cframe)
         # # segment the frame
         # cnn_start = process_time()
         # # skeleton_frame = self.get_mask(thresh_frame)
