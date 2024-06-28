@@ -80,7 +80,21 @@ class Worm:
             self.save_img(large_blobs[i], f"blob_{i}_", i=self.cframe)
             skel_f = self.get_mask_no_CNN(invert(large_blobs[i]))
             self.save_img(skel_f, f"skeleton_{i}_", i=self.cframe)
-            self.get_forks(skel_f)
+            fork_start = process_time()
+            fork_points = list(self.get_forks(skel_f))
+            fork_end = process_time()
+
+            end_start = process_time()
+            endpoints = self._get_endpoints(skel_f)
+            end_end = process_time()
+
+            print(f'fork time: {fork_end - fork_start}')
+            print(f'endpoint time: {end_end - end_start}')
+
+            for point in endpoints:
+                fork_points.append(point)
+
+            self.save_img(skel_f, "points of interest", points_of_interest=fork_points)
         # # segment the frame
         # cnn_start = process_time()
         # # skeleton_frame = self.get_mask(thresh_frame)
