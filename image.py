@@ -39,8 +39,8 @@ def get_edges(image):
     Gx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
     Gy = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
 
-    x = signal.convolve2d(image, Gx)
-    y = signal.convolve2d(image, Gy)
+    x = signal.convolve2d(image, Gx, mode="same")
+    y = signal.convolve2d(image, Gy, mode="same")
 
     x_nonzero = x > 0
     y_nonzero = y > 0
@@ -48,6 +48,7 @@ def get_edges(image):
     A = np.zeros(image.shape)
     A[x_nonzero] = 255
     A[y_nonzero] = 255
+
 
     return A
 
