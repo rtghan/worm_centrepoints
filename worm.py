@@ -9,6 +9,7 @@ import cv2
 from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter
+from scipy import signal
 # from skimage.morphology import skeletonize, thin
 import skimage.morphology
 import csv
@@ -76,8 +77,10 @@ class Worm:
 
         large_blobs = get_large_blobs(invert(thresh_frame))
         for i in range(len(large_blobs)):
-            self.save_img(large_blobs[i], f"blob_{i}_", self.cframe)
-            self.save_img(self.get_mask_no_CNN(invert(large_blobs[i])), f"skeleton_{i}_", self.cframe)
+            self.save_img(large_blobs[i], f"blob_{i}_", i=self.cframe)
+            skel_f = self.get_mask_no_CNN(invert(large_blobs[i]))
+            self.save_img(skel_f, f"skeleton_{i}_", i=self.cframe)
+            self.get_forks(skel_f)
         # # segment the frame
         # cnn_start = process_time()
         # # skeleton_frame = self.get_mask(thresh_frame)
@@ -244,14 +247,6 @@ class Worm:
         print(f"    getting worm took {get_worm_end - get_worm_start}")
         print(f'    smooth took {smooth_end - smooth_start}')
         print(f'    skeleton took {get_skel_end - get_skel}')
-        # # print(f'worm size: {worm_size}')
-        # self.save_img(original_arr, "orig", self.cframe)
-        # self.save_img(blur, f"blur_blur_lev{blur_level}", self.cframe)
-        # self.save_img(smooth, f'smooth_blur_lev{blur_level}', self.cframe)
-        # # self.save_img(small_components, "small components")
-        # self.save_img(flipped, "inverted", self.cframe)
-        # # self.save_img(mask_erode, "erode", self.cframe)
-        # self.save_img(mask_skeleton, "skeleton", self.cframe)
         return mask_skeleton
 
     def get_interp(self, ERROR_TOL=20, method=UnivariateSpline):
@@ -282,6 +277,90 @@ class Worm:
 
         return [x_interp, y_interp, dists, x_vals, y_vals]
 
+    def get_forks(self, skeleton_frame):
+        """
+        Given a skeleton frame, returns a list of the fork points.
+        """
+        skeleton_points = np.column_stack(np.where(skeleton_frame != 0))
+
+        a_start = process_time()
+        N_c_mat = np.zeros(skeleton_frame.shape)
+        N_b_mat_a = np.zeros(skeleton_frame.shape)
+        for r, c in skeleton_points:
+            N_c_mat[r][c] = self.N_c(skeleton_frame, (r, c))
+            N_b_mat_a[r][c] = self.N_b(skeleton_frame, (r, c))
+        N_b_mat_a = N_b_mat_a / 255
+        a_end = process_time()
+
+        b_start = process_time()
+        N_c_mat = np.zeros(skeleton_frame.shape)
+        N_b_mat_b = self.N_b_mat(skeleton_frame)
+        for r, c in skeleton_points:
+            N_c_mat[r][c] = self.N_c(skeleton_frame, (r, c))
+        b_end = process_time()
+
+        print(f'point by point: {a_end - a_start}')
+        print(f'convolve: {b_end - b_start}')
+        print(f'methods same: {np.array_equal(N_b_mat_b, N_b_mat_a)}')
+
+        mat_start = process_time()
+        S_1 = np.zeros(skeleton_frame.shape)
+        S_1[N_c_mat >= 3] = 1
+        S_2 = np.zeros(skeleton_frame.shape)
+        S_2[N_b_mat_a >= 4] = 1
+        S_n_mat = np.bitwise_or(S_1, S_2)
+        S_n = np.column_stack(np.where(S_n_mat != 0))
+        mat_end = process_time()
+
+        by_point_start = process_time()
+        S_n_points = []
+        for r, c in skeleton_points:
+            if N_c_mat[r][c] >= 3:
+                S_n_points.append((r, c))
+            if N_b_mat_a[r][c] >= 4:
+                S_n_points.append((r, c))
+        by_point_end = process_time()
+
+        print(f'array mask: {mat_end - mat_start}')
+        print(f'point by point: {by_point_end - by_point_start}')
+        print(f'methods equal: {np.array_equal(S_n_points, S_n)}')
+
+        self.save_img(skeleton_frame, "fork points", points_of_interest=S_n)
+
+    def N_c(self, skeleton_frame, point):
+        """
+        Computes N_c(p) (# crossing points) for p point as outlined in https://ieeexplore.ieee.org/document/799914
+        Assume skeleton_frame is padded so no point touches a border.
+        """
+        order = [(-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
+
+        s = 0
+        for i in range(len(order)):
+            p_i = skeleton_frame[point[0] + order[i][0]][point[1] + order[i][1]]
+            p_i_1 = skeleton_frame[point[0] + order[(i + 1) % 8][0]][point[1] + order[(i + 1) % 8][1]]
+            s += np.abs(p_i - p_i_1)
+
+        return s / 2
+
+    def N_b(self, skeleton_frame, point):
+        """
+        Computes N_b(p) (# N colored points) for p point as outlined in https://ieeexplore.ieee.org/document/799914
+        Assume skeleton_frame is padded and binarized, so no point touches a border, and colored points have a
+        value of 255.
+        """
+        r, c = point
+        local = skeleton_frame[r - 1: r + 2, c - 1: c + 2]
+        return (np.sum(local) - skeleton_frame[r][c])
+
+    def N_b_mat(self, skeleton_frame):
+        """
+        Computes a matrix A where A[i][j] corresponds to N_b(p_ij) where p_ij is the point at (i, j) in the skeleton
+        frame.
+        N_b being the # of coloured 8-connectivity neighbours, as outlined in https://ieeexplore.ieee.org/document/799914
+        """
+        ker = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
+        return signal.convolve2d(skeleton_frame, ker, mode="same") / 255
+
     def get_head(self, skeleton_frame, ERROR_TOL=80, backups = True):
         """
         Input a new frame of skeleton points to the worm to update where its head is
@@ -289,7 +368,7 @@ class Worm:
 
         # let user pick where the head starts at
         if len(self.head_positions) == 0:
-            head_candidates = self._get_head_candidates(skeleton_frame)
+            head_candidates = self._get_endpoints(skeleton_frame)
             user_choice = self._get_user_selection(skeleton_frame, head_candidates)
 
             if user_choice == 'Skip_frame':
@@ -299,7 +378,7 @@ class Worm:
 
         # otherwise we can assume that we have the head location of the previous frame
         else:
-            head_candidates = self._get_head_candidates(skeleton_frame)
+            head_candidates = self._get_endpoints(skeleton_frame)
 
             # take the head candidate that is the closest to the previous head point
             prev = self.head_positions[-1]
@@ -367,9 +446,9 @@ class Worm:
 
         return head_candidate
 
-    def _get_head_candidates(self, skeleton_frame) -> list[list[int, int]]:
+    def _get_endpoints(self, skeleton_frame) -> list[list[int, int]]:
         """
-        Given an input frame of skeleton points, outputs a list of possible head points.
+        Given an input frame of skeleton points, outputs a list of possible end points.
         """
         N_ROWS, N_COLS = skeleton_frame.shape
 
@@ -394,9 +473,9 @@ class Worm:
             closest = [np.subtract(n, point) for n in nearby_points if not np.array_equal(n, point)]
             vec_closest.append((point, closest))
 
-        # for non-head points, there should be vectors from it to neighbours that point in different directions
+        # for non-end points, there should be vectors from it to neighbours that point in different directions
         # as the vectors should be angled more than 90 degrees apart, their dot product should be negative
-        # hence any point that satisfies this cannot be a head candidate
+        # hence any point that satisfies this cannot be an end candidate
         head_candidates = []
         for point, vectors in vec_closest:
             head_candidate = True
@@ -570,9 +649,17 @@ class Worm:
                 columns = [self.runtime[i][label] for label in components]
                 writer.writerow([str(i)] + columns)
 
-    def save_img(self, data, name='', i=None):
+    def save_img(self, data, name='', i=None, points_of_interest: list = None):
         if len(name) == 0:
             name = "data"
+
+        if points_of_interest is not None:
+            for point in points_of_interest:
+                try:
+                    for r, c in itertools.product(range(-3, 4), repeat=2):
+                        data[point[0] + r][point[1] + c] = 255
+                except IndexError:
+                    pass
 
         new_p = Image.fromarray(data)
         if new_p.mode != 'RGB':
