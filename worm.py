@@ -75,120 +75,79 @@ class Worm:
         thresh_frame[thresh_indices] = 255 # slow: use double for loop manual thresholding
         thresh_end = process_time()
 
-        large_blobs = get_large_blobs(invert(thresh_frame))
-        for i in range(len(large_blobs)):
-            self.save_img(large_blobs[i], f"blob_{i}_", i=self.cframe)
-            skel_f = self.get_mask_no_CNN(invert(large_blobs[i]))
-            self.save_img(skel_f, f"skeleton_{i}_", i=self.cframe)
-
-            fork_end_start = process_time()
-            N_c_M = self.N_c_M(skel_f)
-            fork_mat = np.zeros(skel_f.shape)
-            end_mat = np.zeros(skel_f.shape)
-
-            fork_mat[N_c_M >= 3] = 1
-            end_mat[N_c_M == 1] = 1
-            fork_end_end = process_time()
-
-            print(f'fork/end time: {fork_end_end - fork_end_start}')
-
-            path_start = process_time()
-            dist, path = self.get_body(skel_f, end_mat, fork_mat)
-            path_end = process_time()
-            print(f'path get time: {path_end - path_start}')
-            mod = np.copy(skel_f)
-
-            try:
-                for r, c in itertools.product(range(-3, 4), repeat=2):
-                    mod[path[0][0] + r][path[0][1] + c] = 255
-                    mod[path[-1][0] + r][path[-1][1] + c] = 255
-            except IndexError:
-                pass
-
-
-            new_p = Image.fromarray(mod)
-            if new_p.mode != 'RGB':
-                new_p = new_p.convert('RGB')
-            new_p.show()
-        # # segment the frame
-        # cnn_start = process_time()
-        # # skeleton_frame = self.get_mask(thresh_frame)
-        # skeleton_frame = self.get_mask_no_CNN(thresh_frame)
-        # cnn_end = process_time()
+        # attempt to grab the head
+        head_grab_start = process_time()
+        ret = self.get_head(thresh_frame)
+        head_grab_end = process_time()
+        # print(self.sorted_body)
         #
-        # # attempt to grab the head
-        # head_grab_start = process_time()
-        # ret = self.get_head(skeleton_frame)
-        # head_grab_end = process_time()
-        #
-        # # the case when the head tracking reported an error due to the new head position being too far from the old one
-        # backup_start = process_time()
-        # if ret == -1:
-        #     backups = []
-        #
-        #     # create some alternate thresholding level frames to try
-        #     thresh_step = 10
-        #     n_thresh_frames = 2
-        #     for i in range(n_thresh_frames):
-        #         new_thresh = np.zeros(thresh_frame.shape)
-        #         new_thresh[thresh_frame > (thresh - (i + 1)*thresh_step)] = 255
-        #         backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
-        #
-        #     prev =  thresh_frame
-        #
-        #     # also try the cnn
-        #     backups.append((augment_frame, self.get_mask, "CNN"))
-        #
-        #     # try running the backup frames and see if any of them work
-        #     while ret == -1 and len(backups) > 0:
-        #         backup, method, type = backups.pop(0)
-        #         print(f"Frame errored, trying again with backup frame {type}...")
-        #         self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", self.cframe)
-        #         self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
-        #         skeleton_frame = method(backup)
-        #         ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
-        #         prev = backup
-        #
-        #     # if there is still an error and the user still wants to skip, then we must return
-        #     if ret == -1:
-        #         self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
-        #         return -1
-        # backup_end = process_time()
+        # the case when the head tracking reported an error due to the new head position being too far from the old one
+        backup_start = process_time()
+        if ret == -1:
+            backups = []
+
+            # create some alternate thresholding level frames to try
+            thresh_step = 10
+            n_thresh_frames = 2
+            for i in range(n_thresh_frames):
+                new_thresh = np.zeros(thresh_frame.shape)
+                new_thresh[thresh_frame > (thresh - (i + 1)*thresh_step)] = 255
+                backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
+
+            prev =  thresh_frame
+
+            # also try the cnn
+            backups.append((augment_frame, self.get_mask, "CNN"))
+
+            # try running the backup frames and see if any of them work
+            while ret == -1 and len(backups) > 0:
+                backup, method, type = backups.pop(0)
+                print(f"Frame errored, trying again with backup frame {type}...")
+                self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", self.cframe)
+                self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
+                skeleton_frame = method(backup)
+                ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
+                prev = backup
+
+            # if there is still an error and the user still wants to skip, then we must return
+            if ret == -1:
+                self.save_img(prev, "fail_frames/fail_all_", len(self.head_positions))
+                return -1
+        backup_end = process_time()
         #
         # # otherwise proceed with the rest of the body update
         # body_sort_start = process_time()
         # self.body_sort(skeleton_frame)
         # body_sort_end = process_time()
         #
-        # # get body points using interpolation
-        # interp_start = process_time()
-        # self.get_skeleton(spacing)
-        #
-        # # select the x and y coordinates respectively to plot
-        # f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
-        # interp_end = process_time()
-        #
-        # file_save_start = process_time()
-        # plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9, markersize=3)
-        # # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
-        # ax = plt.gca()
-        # ax.set_xlim([0, 1024])
-        # ax.set_ylim([0, 1024])
-        #
-        # plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
-        # plt.clf()
-        # file_save_end = process_time()
-        #
-        # # track runtime of each component
-        # times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
-        #          (thresh_end - hist_end, "thresh"), (cnn_end - cnn_start, "skeletonization"),
-        #          (head_grab_end - head_grab_start, "get head"), (body_sort_end - body_sort_start, "body_sort"),
-        #          (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save"),
-        #          (backup_end - backup_start, "backup")]
-        # times_dict = {stage: time for time, stage in times}
-        # self.runtime.append(times_dict)
-        # self.add_points_csv()
-        # print(f'Runtime of pipeline parts: {times}')
+        # get body points using interpolation
+        interp_start = process_time()
+        self.get_skeleton(spacing)
+
+        # select the x and y coordinates respectively to plot
+        f_x_vals, f_y_vals = np.asarray(self.body_points[-1]).T
+        interp_end = process_time()
+
+        file_save_start = process_time()
+        plt.plot(f_x_vals, f_y_vals, '.', alpha=0.9, markersize=3)
+        # plt.plot(x_vals, y_vals, '-r', alpha=0.5)
+        ax = plt.gca()
+        ax.set_xlim([0, 1024])
+        ax.set_ylim([0, 1024])
+
+        plt.savefig("temp_processed_frames/file%02d.png" % len(self.head_positions), dpi=300)
+        plt.clf()
+        file_save_end = process_time()
+
+        # track runtime of each component
+        times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
+                 (thresh_end - hist_end, "thresh"), (head_grab_end - head_grab_start, "get head skeletonize and sort"),
+                 (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save"),
+                 (backup_end - backup_start, "backup")]
+        times_dict = {stage: time for time, stage in times}
+        self.runtime.append(times_dict)
+        self.add_points_csv()
+        print(f'Runtime of pipeline parts: {times}')
 
         self.cframe += 1
         return thresh_frame
@@ -384,22 +343,56 @@ class Worm:
 
         # otherwise we can assume that we have the head location of the previous frame
         else:
-            head_candidates = self._get_endpoints(skeleton_frame)
+            large_blobs = get_large_blobs(binary_thresh(invert(skeleton_frame)))
 
-            # take the head candidate that is the closest to the previous head point
+            paths = []
+            for i in range(len(large_blobs)):
+                skel_f = self.get_mask_no_CNN(invert(large_blobs[i]))
+
+                fork_end_start = process_time()
+                N_c_M = self.N_c_M(skel_f)
+                fork_mat = np.zeros(skel_f.shape)
+                end_mat = np.zeros(skel_f.shape)
+
+                fork_mat[N_c_M >= 3] = 1
+                end_mat[N_c_M == 1] = 1
+                fork_end_end = process_time()
+
+                print(f'fork/end time: {fork_end_end - fork_end_start}')
+
+                path_start = process_time()
+                dist, path = self.get_body(skel_f, end_mat, fork_mat)
+                path_end = process_time()
+                print(f'path get time: {path_end - path_start}')
+
+                paths.append(list(path))
+
+
+            # take the path that offers the closest head guess
+            # TODO: get a better metric to decide which worm body is the best (i.e. smoothness, tail, diff in curve)
+            min_head_dist = 9999
+            worm_body_guess = None
             prev = self.head_positions[-1]
-            prev_head_distances = [(math.dist(prev, head_cand), head_cand) for head_cand in head_candidates]
-            head_guess = sorted(prev_head_distances, key=lambda x: x[0])[0][1]
+            for path in paths:
+                if math.dist(path[0], prev) < min_head_dist:
+                    worm_body_guess = path
+                    min_head_dist = math.dist(path[0], prev)
+
+                if math.dist(path[-1], prev) < min_head_dist:
+                    worm_body_guess = path.reverse()
+                    min_head_dist = math.dist(path[-1], prev)
+            head_guess = worm_body_guess[0]
 
             # make sure the new guess is reasonable
-            if math.dist(prev, head_guess) < ERROR_TOL:
+            if True or math.dist(prev, head_guess) < ERROR_TOL:
                 self.head_positions.append(head_guess)
+                self.sorted_body.append(worm_body_guess)
             else:
                 # if we return an error on the head, then we should try processing a backup if there are any
                 if backups:
                     return -1
 
-                user_choice = self._get_user_selection(skeleton_frame, head_candidates)
+                user_choice = self._get_user_selection(skeleton_frame, [worm_body_guess[0], worm_body_guess[-1]])
 
                 # stop updating the worm for this frame if the user desires (choosing 'Skip Frame')
                 # if the user's choice is not "Skip Frame", then save the frame, otherwise, return -1
@@ -508,10 +501,6 @@ class Worm:
 
         visited = np.zeros(skeleton_frame.shape)
         explore_stack = list(end_points)
-        # start_point = end_points[0]
-        # visited[start_point[0]][start_point[1]] = 1
-        #
-        # explore_stack = [start_point]
 
         while len(explore_stack) > 0:
             poi = explore_stack.pop()
@@ -521,6 +510,7 @@ class Worm:
 
         sorted_paths = sorted(paths, key=lambda x: x[0], reverse=True)
         return sorted_paths[0]
+
     def explore(self, skeleton_frame, start_point, end_mat, fork_mat, visited):
         """
         Given the skeleton frame, a starting point, end points, and fork points, travels from that point to the next
