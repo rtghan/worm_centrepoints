@@ -80,21 +80,36 @@ class Worm:
             self.save_img(large_blobs[i], f"blob_{i}_", i=self.cframe)
             skel_f = self.get_mask_no_CNN(invert(large_blobs[i]))
             self.save_img(skel_f, f"skeleton_{i}_", i=self.cframe)
-            fork_start = process_time()
-            fork_points = list(self.get_forks(skel_f))
-            fork_end = process_time()
 
-            end_start = process_time()
-            endpoints = self._get_endpoints(skel_f)
-            end_end = process_time()
+            fork_end_start = process_time()
+            N_c_M = self.N_c_M(skel_f)
+            fork_mat = np.zeros(skel_f.shape)
+            end_mat = np.zeros(skel_f.shape)
 
-            print(f'fork time: {fork_end - fork_start}')
-            print(f'endpoint time: {end_end - end_start}')
+            fork_mat[N_c_M >= 3] = 1
+            end_mat[N_c_M == 1] = 1
+            fork_end_end = process_time()
 
-            for point in endpoints:
-                fork_points.append(point)
+            print(f'fork/end time: {fork_end_end - fork_end_start}')
 
-            self.save_img(skel_f, "points of interest", points_of_interest=fork_points)
+            path_start = process_time()
+            dist, path = self.get_body(skel_f, end_mat, fork_mat)
+            path_end = process_time()
+            print(f'path get time: {path_end - path_start}')
+            mod = np.copy(skel_f)
+
+            try:
+                for r, c in itertools.product(range(-3, 4), repeat=2):
+                    mod[path[0][0] + r][path[0][1] + c] = 255
+                    mod[path[-1][0] + r][path[-1][1] + c] = 255
+            except IndexError:
+                pass
+
+
+            new_p = Image.fromarray(mod)
+            if new_p.mode != 'RGB':
+                new_p = new_p.convert('RGB')
+            new_p.show()
         # # segment the frame
         # cnn_start = process_time()
         # # skeleton_frame = self.get_mask(thresh_frame)
@@ -479,6 +494,89 @@ class Worm:
                 head_candidates.append(point)
 
         return head_candidates
+
+    def get_body(self, skeleton_frame, end_mat, fork_mat):
+        """
+        Given the skeleton, a list of end points and fork points, finds the longest path between two points on interest
+        and considers it as the worm body.
+        """
+        paths = []
+        end_points = np.column_stack(np.where(end_mat != 0))
+        fork_points = np.column_stack(np.where(end_mat != 0))
+
+        # TODO: deal with non connected components
+
+        visited = np.zeros(skeleton_frame.shape)
+        explore_stack = list(end_points)
+        # start_point = end_points[0]
+        # visited[start_point[0]][start_point[1]] = 1
+        #
+        # explore_stack = [start_point]
+
+        while len(explore_stack) > 0:
+            poi = explore_stack.pop()
+            next_points, path = self.explore(skeleton_frame, poi, end_mat, fork_mat, visited)
+            explore_stack += next_points
+            paths.append(path)
+
+        sorted_paths = sorted(paths, key=lambda x: x[0], reverse=True)
+        return sorted_paths[0]
+    def explore(self, skeleton_frame, start_point, end_mat, fork_mat, visited):
+        """
+        Given the skeleton frame, a starting point, end points, and fork points, travels from that point to the next
+        fork/end point, and returns the possible points that may be traversed starting from that ending poi. Also returns
+        the two points that make up the path, and the length of the path.
+        """
+        N_ROWS, N_COLS = skeleton_frame.shape
+        path_len = 0
+        path = [start_point]
+        path_end = None
+
+        explore_stack = [start_point]
+        # set a search radius around each point for the points nearby it
+        RADIUS = 1  # slow: 5
+        steps = list(itertools.product(range(-RADIUS, RADIUS + 1), repeat=2))
+        init = True
+
+        while len(explore_stack) > 0:
+            r, c = explore_stack.pop()
+            visited[r][c] = 1
+
+            # make sure it is not a fork or end point
+            if (end_mat[r][c] == 0 and fork_mat[r][c] == 0) or init:
+                init = False
+
+                # find the nearest point
+                min_dist = 999
+                closest_point = None
+                for step_r, step_c in steps:
+                    search_r, search_c = r + step_r, c + step_c
+                    if 0 <= search_r < N_ROWS and 0 <= search_c < N_COLS:
+                        if (skeleton_frame[search_r][search_c] > 0) and (visited[search_r][search_c] == 0):
+                            new_dist = math.dist((search_r, search_c), (r, c))
+                            if new_dist < min_dist:
+                                min_dist = new_dist
+                                closest_point = (search_r, search_c)
+                if closest_point is not None:
+                    path_len += min_dist
+                    path.append(closest_point)
+                    explore_stack.append(closest_point)
+            else:
+                path_end = (r, c)
+                path.append(path_end)
+
+        # once we get here, we must have reached a fork point/end point. get the nearby points from which to start
+        # exploring the next paths
+        next_points = []
+        if path_end is not None:
+            for step_r, step_c in steps:
+                search_r, search_c = path_end[0] + step_r, path_end[1] + step_c
+                if 0 <= search_r < N_ROWS and 0 <= search_c < N_COLS:
+                    if skeleton_frame[search_r][search_c] > 0 and visited[search_r][search_c] == 0:
+                        next_points.append((search_r, search_c))
+                        visited[search_r][search_c] = 1
+
+        return next_points, (path_len, path)
 
     def body_sort(self, skeleton_frame, from_head=True):
         """
