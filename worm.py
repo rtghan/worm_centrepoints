@@ -294,6 +294,7 @@ class Worm:
     def get_forks(self, skeleton_frame):
         """
         Given a skeleton frame, returns a list of the fork points.
+        Using method outlined in https://ieeexplore.ieee.org/document/799914
         """
         skeleton_points = np.column_stack(np.where(skeleton_frame != 0))
         bin_frame = skeleton_frame / 255
@@ -304,9 +305,27 @@ class Worm:
 
         S_1 = np.zeros(bin_frame.shape)
         S_1[N_c_mat >= 3] = 1
-
         self.save_img(skeleton_frame, "forks", points_of_interest=np.column_stack(np.where(S_1 != 0)))
+
+        end = np.zeros(bin_frame.shape)
+        end[N_c_mat == 1] = 1
+        self.save_img(skeleton_frame, "ends", points_of_interest=np.column_stack(np.where(end != 0)))
+
         return np.column_stack(np.where(S_1 != 0))
+
+    def N_c_M(self, skeleton_frame):
+        """
+        Given a skeleton frame, returns a matrix of the same size where the value of each entry is the # of crossing
+        points at that point in the frame, as determined by https://ieeexplore.ieee.org/document/799914.
+        """
+        skeleton_points = np.column_stack(np.where(skeleton_frame != 0))
+        bin_frame = skeleton_frame / 255
+
+        N_c_mat = np.zeros(bin_frame.shape)
+        for r, c in skeleton_points:
+            N_c_mat[r][c] = self.N_c(bin_frame, (r, c))
+
+        return N_c_mat
 
     def N_c(self, skeleton_frame, point):
         """
@@ -461,9 +480,10 @@ class Worm:
 
         return head_candidates
 
-    def body_sort(self, skeleton_frame):
+    def body_sort(self, skeleton_frame, from_head=True):
         """
         Saves a sorted list of the body points in order of how close they are to the head (arc-length wise).
+        from_head determines whether the program assumes you provided a head point, or a tail (end) point
         """
         N_ROWS, N_COLS = skeleton_frame.shape
         self.sorted_body.append([])
@@ -483,7 +503,8 @@ class Worm:
             return -1
         sys.setrecursionlimit(1000)
 
-        self.sorted_body[-1].reverse()
+        if from_head:
+            self.sorted_body[-1].reverse()
         self.save_sorted_body()
 
         return 0
@@ -625,15 +646,16 @@ class Worm:
         if len(name) == 0:
             name = "data"
 
+        img = np.copy(data)
         if points_of_interest is not None:
             for point in points_of_interest:
                 try:
                     for r, c in itertools.product(range(-3, 4), repeat=2):
-                        data[point[0] + r][point[1] + c] = 255
+                        img[point[0] + r][point[1] + c] = 255
                 except IndexError:
                     pass
 
-        new_p = Image.fromarray(data)
+        new_p = Image.fromarray(img)
         if new_p.mode != 'RGB':
             new_p = new_p.convert('RGB')
 
