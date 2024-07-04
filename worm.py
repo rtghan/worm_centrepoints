@@ -55,7 +55,7 @@ class Worm:
         self.runtime = []
         self.position_csv, self.position_writer = self.init_csv()
 
-    def add_frame(self, video_frame, denoise: float = 2, thresh: int = 40, spacing: int = 15):
+    def add_frame(self, video_frame, denoise: float = 2, thresh: int = 40, spacing: int = 15, detailed_runtime=False):
         """
         Update the information of the worm with a new frame. Returns 1 if the user chose to skip the frame on the first
         frame, -1 for the user choosing to skip a frame in general.
@@ -92,19 +92,19 @@ class Worm:
             for i in range(n_thresh_frames):
                 new_thresh = np.zeros(thresh_frame.shape)
                 new_thresh[thresh_frame > (thresh - (i + 1)*thresh_step)] = 255
-                backups.append((new_thresh, self.get_mask_no_CNN, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
+                backups.append((new_thresh, self.get_head, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
 
             prev =  thresh_frame
 
             # also try the cnn
-            backups.append((augment_frame, self.get_mask, "CNN"))
+            backups.append((augment_frame, self.get_head, "no thresh"))
 
             # try running the backup frames and see if any of them work
             while ret == -1 and len(backups) > 0:
                 backup, method, type = backups.pop(0)
                 print(f"Frame errored, trying again with backup frame {type}...")
                 self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", self.cframe)
-                self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
+                # self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
                 skeleton_frame = method(backup)
                 ret = self.get_head(skeleton_frame, backups=(len(backups) > 0))
                 prev = backup
@@ -140,7 +140,9 @@ class Worm:
         file_save_end = process_time()
 
         # track runtime of each component
-        times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
+        times = [(file_save_end - denoise_start, "total")]
+        if detailed_runtime:
+            times = [(denoise_end - denoise_start, "denoise"), (hist_end - denoise_end, "hist"),
                  (thresh_end - hist_end, "thresh"), (head_grab_end - head_grab_start, "get head skeletonize and sort"),
                  (interp_end - interp_start, "interp"), (file_save_end - file_save_start, "file_save"),
                  (backup_end - backup_start, "backup")]
@@ -168,7 +170,7 @@ class Worm:
         # self.save_img(skeletonize(mask_erode), "cv2 skeletonize")
         return mask_skeleton
 
-    def get_mask_no_CNN(self, original_arr: np.array):
+    def get_mask_no_CNN(self, original_arr: np.array, print_runtime=False):
         """
         Takes a frame from the video, and attempts to use purely image processing methods to
         get the skeletonized version.
@@ -230,11 +232,12 @@ class Worm:
         mask_skeleton = skeletonize(mask_erode)
         get_skel_end = process_time()
 
-        print(f'Skeletonization:')
-        print(f"    fill took {fill_end - fill_start}")
-        print(f"    getting worm took {get_worm_end - get_worm_start}")
-        print(f'    smooth took {smooth_end - smooth_start}')
-        print(f'    skeleton took {get_skel_end - get_skel}')
+        if print_runtime:
+            print(f'Skeletonization:')
+            print(f"    fill took {fill_end - fill_start}")
+            print(f"    getting worm took {get_worm_end - get_worm_start}")
+            print(f'    smooth took {smooth_end - smooth_start}')
+            print(f'    skeleton took {get_skel_end - get_skel}')
         return mask_skeleton
 
     def get_interp(self, ERROR_TOL=20, method=UnivariateSpline):
@@ -326,7 +329,7 @@ class Worm:
         local = skeleton_frame[r - 1: r + 2, c - 1: c + 2]
         return (np.sum(local) - 1)
 
-    def get_head(self, skeleton_frame, ERROR_TOL=80, backups = True):
+    def get_head(self, skeleton_frame, ERROR_TOL=80, backups = True, video_exp=True, print_runtime=False):
         """
         Input a new frame of skeleton points to the worm to update where its head is
         """
@@ -346,6 +349,7 @@ class Worm:
             large_blobs = get_large_blobs(binary_thresh(invert(skeleton_frame)))
 
             paths = []
+            frames = []
             for i in range(len(large_blobs)):
                 skel_f = self.get_mask_no_CNN(invert(large_blobs[i]))
 
@@ -358,35 +362,44 @@ class Worm:
                 end_mat[N_c_M == 1] = 1
                 fork_end_end = process_time()
 
-                print(f'fork/end time: {fork_end_end - fork_end_start}')
+                if print_runtime:
+                    print(f'fork/end time: {fork_end_end - fork_end_start}')
 
                 path_start = process_time()
                 dist, path = self.get_body(skel_f, end_mat, fork_mat)
                 path_end = process_time()
-                print(f'path get time: {path_end - path_start}')
+
+                if print_runtime:
+                    print(f'path get time: {path_end - path_start}')
 
                 paths.append(list(path))
-
+                frames.append(skel_f)
 
             # take the path that offers the closest head guess
             # TODO: get a better metric to decide which worm body is the best (i.e. smoothness, tail, diff in curve)
             min_head_dist = 9999
             worm_body_guess = None
+            chosen_frame = None
             prev = self.head_positions[-1]
-            for path in paths:
-                if math.dist(path[0], prev) < min_head_dist:
-                    worm_body_guess = path
-                    min_head_dist = math.dist(path[0], prev)
+            for i in range(len(paths)):
+                if math.dist(paths[i][0], prev) < min_head_dist:
+                    worm_body_guess = paths[i]
+                    min_head_dist = math.dist(paths[i][0], prev)
+                    chosen_frame = frames[i]
 
-                if math.dist(path[-1], prev) < min_head_dist:
-                    worm_body_guess = path.reverse()
-                    min_head_dist = math.dist(path[-1], prev)
+                if math.dist(paths[i][-1], prev) < min_head_dist:
+                    worm_body_guess = paths[i].reverse()
+                    min_head_dist = math.dist(paths[i][-1], prev)
+                    chosen_frame = frames[i]
             head_guess = worm_body_guess[0]
 
             # make sure the new guess is reasonable
             if True or math.dist(prev, head_guess) < ERROR_TOL:
                 self.head_positions.append(head_guess)
                 self.sorted_body.append(worm_body_guess)
+
+                if video_exp:
+                    self.save_img(chosen_frame, "temp_processed_frames/skeleton", i=self.cframe)
             else:
                 # if we return an error on the head, then we should try processing a backup if there are any
                 if backups:
@@ -398,6 +411,9 @@ class Worm:
                 # if the user's choice is not "Skip Frame", then save the frame, otherwise, return -1
                 if type(user_choice) != str:
                     self.head_positions.append((int(user_choice[0]), int(user_choice[1])))
+                    if int(user_choice[0]) == worm_body_guess[-1][0] and int(user_choice[1]) == worm_body_guess[-1][1]:
+                        worm_body_guess = worm_body_guess.reverse()
+                    self.sorted_body.append(worm_body_guess)
                 else:
                     return -1
 
