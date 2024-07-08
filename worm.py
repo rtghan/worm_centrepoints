@@ -41,12 +41,13 @@ class Worm:
         runtime: a list of the runtimes of each component of the pipeline for each frame
         cframe: current frame to be processed
     """
-    def __init__(self, src, initial_head_guess, initial_tail_guess, skip, segnet):
+    def __init__(self, src, initial_head_guess, careful, fps, skip, segnet):
         self.src = src
         if initial_head_guess is not None:
             self.head_positions = [initial_head_guess]
         self.tail_positions = [(1023, 500)]
-        self.fps = 11
+        self.careful = careful
+        self.fps = fps
         self.body_points = []
         self.sorted_body = []
         self.cframe = 1
@@ -70,7 +71,7 @@ class Worm:
         augment_frame = cv2.equalizeHist(augment_frame)
         hist_end = process_time()
 
-        self.save_img(augment_frame, "curr_frame")
+        # self.save_img(augment_frame, "curr_frame")
 
         # fast thresholding using numpy
         thresh_frame = np.asarray(augment_frame)
@@ -80,7 +81,7 @@ class Worm:
 
         # attempt to grab the head
         head_grab_start = process_time()
-        ret = self.get_head(thresh_frame, save_path_img=True)
+        ret = self.get_head(thresh_frame, choose_largest_blob=(True and (not self.careful)))
         head_grab_end = process_time()
         # print(self.sorted_body)
         #
@@ -92,15 +93,15 @@ class Worm:
             # create some alternate thresholding level frames to try
             thresh_step = 10
             n_thresh_frames = 2
-            for i in range(n_thresh_frames):
+            for i in range(n_thresh_frames + 1):
                 new_thresh = np.zeros(thresh_frame.shape)
-                new_thresh[thresh_frame > (thresh - (i + 1)*thresh_step)] = 255
-                backups.append((new_thresh, self.get_head, f"thresh = {str(thresh - (i + 1)*thresh_step)}"))
+                new_thresh[thresh_frame > (thresh - i*thresh_step)] = 255
+                backups.append((new_thresh, self.get_head, f"thresh = {str(thresh - i*thresh_step)}"))
 
             prev =  thresh_frame
 
-            # also try the cnn
-            backups.append((augment_frame, self.get_head, "no thresh"))
+            # add last frame as default frame so that it is the one shown to the user if manual intervention needed
+            backups.append((thresh_frame, self.get_head, "default_userbackup"))
 
             # try running the backup frames and see if any of them work
             while ret == -1 and len(backups) > 0:
@@ -108,7 +109,7 @@ class Worm:
                 print(f"Frame errored, trying again with backup frame {type}...")
                 self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", i=self.cframe)
                 # self.save_img(skeleton_frame, f'fail_frames/fail_skeleton_{len(backups)}_', self.cframe)
-                ret = self.get_head(backup, backups=(len(backups) > 0), save_path_img=False)
+                ret = self.get_head(backup, backups=(len(backups) > 0), choose_largest_blob=False)
                 prev = backup
 
             # if there is still an error and the user still wants to skip, then we must return
@@ -384,7 +385,6 @@ class Worm:
         prev_tail = self.tail_positions[-1]
 
         # TODO: get a better metric to decide which worm body is the best (i.e. smoothness, tail, diff in curve)
-        guesses = []
         for i in range(len(guesses)):
             if math.dist(guesses[i][0], prev) < min_head_dist:
                 worm_body_guess = guesses[i]
@@ -429,107 +429,101 @@ class Worm:
         """
         Input a new frame of skeleton points to the worm to update where its head is
         """
-        # let user pick where the head starts at
-        if len(self.head_positions) == 0:
-            head_candidates = self._get_endpoints(augment_frame)
-            user_choice = self._get_user_selection(augment_frame, head_candidates)
+        first_frame = (len(self.head_positions) in [0, 1]) and (not self.careful)
+        worm_body_guess = None
+        chosen_frame = None
+        paths = []
+        frames = []
 
-            if user_choice == 'Skip_frame':
-                return 1
-
-            self.head_positions.append((int(user_choice[0]), int(user_choice[1])))
-
-        # otherwise we can assume that we have the head location of the previous frame
+        # either we can go through each and every large blob, or try simply choosing the largest blob
+        if choose_largest_blob:
+            skel_f = self.get_mask_no_CNN(binary_thresh(augment_frame))
+            path = self.get_longest_path(skel_f, print_runtime=print_runtime)
+            worm_body_guess = path
+            chosen_frame = skel_f
         else:
-            worm_body_guess = None
-            chosen_frame = None
+            large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)))
 
-            # either we can go through each and every large blob, or try simply choosing the largest blob
-            if choose_largest_blob:
-                skel_f = self.get_mask_no_CNN(binary_thresh(augment_frame))
-                path = self.get_longest_path(skel_f, print_runtime=print_runtime)
-                worm_body_guess = path
-                chosen_frame = skel_f
-            else:
-                large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)))
-
-                if len(large_blobs) == 0:
-                    self.save_img(augment_frame, 'fail_frames/no_blob', i=self.cframe)
-                    return -1
-
-                paths = []
-                frames = []
-                for i in range(len(large_blobs)):
-                    skel_f = self.get_mask_no_CNN(invert(large_blobs[i]), save_img=True)
-                    if save_path_img:
-                        self.save_img(skel_f, f"skeleton preprocess_{i}", i=self.cframe)
-                    path = self.get_longest_path(skel_f, print_runtime=print_runtime)
-                    paths.append(list(path))
-                    frames.append(skel_f)
-
-                worm_body_guess, chosen_frame = self.get_best_guess(paths, frames)
-
-            # in case of failure
-            if type(worm_body_guess) == int and worm_body_guess == -1:
-                self.save_img(augment_frame, 'fail_frames/no_worm', i=self.cframe)
+            if len(large_blobs) == 0:
+                self.save_img(augment_frame, 'fail_frames/no_blob', i=self.cframe)
                 return -1
 
-            head_guess = worm_body_guess[0]
-            tail_guess = worm_body_guess[-1]
+            for i in range(len(large_blobs)):
+                skel_f = self.get_mask_no_CNN(invert(large_blobs[i]), save_img=save_path_img)
+                if save_path_img:
+                    self.save_img(skel_f, f"skeleton preprocess_{i}", i=self.cframe)
+                path = self.get_longest_path(skel_f, print_runtime=print_runtime)
+                paths.append(list(path))
+                frames.append(skel_f)
 
-            prev = self.head_positions[-1]
-            prev_tail = self.tail_positions[-1]
-            # make sure the new guess is reasonable
-            # TODO: remove the True and fix the backups
-            if True or math.dist(prev, head_guess) < ERROR_TOL or math.dist(prev_tail, tail_guess) < ERROR_TOL:
-                self.head_positions.append(head_guess)
-                self.tail_positions.append(tail_guess)
+            worm_body_guess, chosen_frame = self.get_best_guess(paths, frames)
+
+        # in case of failure
+        if type(worm_body_guess) == int and worm_body_guess == -1:
+            self.save_img(augment_frame, 'fail_frames/no_worm', i=self.cframe)
+            return -1
+
+        head_guess = worm_body_guess[0]
+        tail_guess = worm_body_guess[-1]
+
+        prev = self.head_positions[-1]
+        prev_tail = self.tail_positions[-1]
+        # make sure the new guess is reasonable
+        if first_frame or math.dist(prev, head_guess) < ERROR_TOL or math.dist(prev_tail, tail_guess) < ERROR_TOL:
+            self.head_positions.append(head_guess)
+            self.tail_positions.append(tail_guess)
+            self.sorted_body.append(worm_body_guess)
+
+            if video_exp:
+                self.save_img(chosen_frame, "temp_processed_frames/skeleton", i=self.cframe)
+        else:
+            # if we return an error on the head, then we should try processing a backup if there are any
+            if backups:
+                return -1
+
+            user_choice = self._get_user_selection(augment_frame, paths)
+
+            # stop updating the worm for this frame if the user desires (choosing 'Skip Frame')
+            # if the user's choice is not "Skip Frame", then save the frame, otherwise, return -1
+            if type(user_choice) != str:
+                self.head_positions.append((int(user_choice[0]), int(user_choice[1])))
+                if int(user_choice[0]) == worm_body_guess[-1][0] and int(user_choice[1]) == worm_body_guess[-1][1]:
+                    worm_body_guess = worm_body_guess.reverse()
                 self.sorted_body.append(worm_body_guess)
-
-                if video_exp:
-                    self.save_img(chosen_frame, "temp_processed_frames/skeleton", i=self.cframe)
             else:
-                # if we return an error on the head, then we should try processing a backup if there are any
-                if backups:
-                    return -1
-
-                user_choice = self._get_user_selection(augment_frame, [worm_body_guess[0], worm_body_guess[-1]])
-
-                # stop updating the worm for this frame if the user desires (choosing 'Skip Frame')
-                # if the user's choice is not "Skip Frame", then save the frame, otherwise, return -1
-                if type(user_choice) != str:
-                    self.head_positions.append((int(user_choice[0]), int(user_choice[1])))
-                    if int(user_choice[0]) == worm_body_guess[-1][0] and int(user_choice[1]) == worm_body_guess[-1][1]:
-                        worm_body_guess = worm_body_guess.reverse()
-                    self.sorted_body.append(worm_body_guess)
-                else:
-                    return -1
+                return -1
 
         return 0
 
-    def _get_user_selection(self, skeleton_frame, head_candidates) -> list[int, int]:
+    def _get_user_selection(self, skeleton_frame, body_guesses):
         """
-        Given an input frame of skeleton points, generates the possible head candidates, and lets the user
-        choose which one should be designated head.
+        Given an input frame of skeleton points and possible body candidates, allows the user to choose the real
+        worm body.
         """
-        sorted_skeleton = sortSkeleton(skeleton_frame)
-        head_candidates.append(sorted_skeleton[0])
-        head_candidates.append(self.head_positions[-1])
-        head_candidates.append("Skip frame")
-        head_candidate = None
+        worm_head_tails = []
+        for guess in body_guesses:
+            worm_head_tails.append((guess, guess[0], guess[-1]))
+            worm_head_tails.append((guess, guess[-1], guess[0]))
+        worm_head_tails.append("Skip Frame")
 
-        # show user options
-        for i in range(len(head_candidates)):
-            if type(head_candidates[i]) == str:
-                print(f'{i}: {head_candidates[i]}')
+        # print user options
+        for i in range(len(worm_head_tails)):
+            if type(worm_head_tails[i]) == tuple:
+                _, head, tail = worm_head_tails[i]
+                print(f'Worm {i}: Head at ({head[0]}, {head[1]}), Tail at ({tail[0]}, {tail[1]})')
             else:
-                print(f'{i}: (row, column) - ({head_candidates[i][0]}, {head_candidates[i][1]}) ')
+                print(f"{i}: {worm_head_tails[i]}")
 
-        mod = skeleton_frame
-        for i in range(len(head_candidates) - 1):
+        # generate and show display image
+        mod = np.zeros(skeleton_frame.shape)
+        for i in range(len(worm_head_tails) - 1):
+            body, point_a, point_b = worm_head_tails[i]
             try:
-                for r, c in itertools.product(range(-3, 4), repeat=2):
-                    mod[head_candidates[i][0] + r][head_candidates[i][1] + c] = 255
+                for r, c, in itertools.product(range(-3, 4), repeat=2):
+                    mod[point_a[0] + r][point_a[1] + c] = 255
+                    mod[point_b[0] + r][point_b[1] + c] = 255
+                for point in body:
+                    mod[point[0]][point[1]] = 150 + i*(155/(len(worm_head_tails) - 1))
             except IndexError:
                 pass
 
@@ -538,16 +532,26 @@ class Worm:
             new_p = new_p.convert('RGB')
         new_p.show()
 
-        # get input
-        while head_candidate is None:
+        # get input and return correct worm
+        body_choice, head_choice, tail_choice = None, None, None
+        other_choice = None
+        body_picked = True
+        while body_choice is None:
             try:
                 selection = int(input("Select the head/option: "))
-                head_candidate = head_candidates[selection]
+                if type(worm_head_tails[selection]) != tuple:
+                    other_choice = worm_head_tails[selection]
+                    body_picked = False
+                else:
+                    body_choice, head_choice, tail_choice = worm_head_tails[selection]
             except (IndexError, ValueError) as e:
                 print("Invalid selection, try again. ")
                 pass
 
-        return head_candidate
+        if body_picked:
+            return body_choice, head_choice, tail_choice
+        else:
+            return other_choice
 
     def _get_endpoints(self, skeleton_frame) -> list[list[int, int]]:
         """
