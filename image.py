@@ -28,9 +28,16 @@ def invert(image):
     """
     Inverts a binary image.
     """
-    inversion = np.zeros(image.shape)
-    inversion[image == 0] = 255
-    return inversion
+    return 255 - image
+
+def binary_thresh(image, thresh=127, cap=255):
+    """
+    Thresholds an image into binary values. By default, the threshold is 127, and we raise values to 255.
+    """
+    bin = np.zeros(image.shape)
+    bin[image >= thresh] = 255
+
+    return bin
 
 def get_edges(image):
     """
@@ -54,7 +61,7 @@ def get_edges(image):
 
     return A
 
-def get_large_blobs(image):
+def get_large_blobs(image, large_size=50000):
     """
     Given a binary image, returns a list of images that are only the largest blobs.
     """
@@ -64,8 +71,7 @@ def get_large_blobs(image):
 
     sizes = stats[1:, cv2.CC_STAT_AREA]
 
-    large_size = 50000
-    large_component_labels = np.argwhere(sizes > 50000) + 1
+    large_component_labels = np.argwhere(sizes > large_size) + 1
     large_components = []
 
     for label in large_component_labels:
