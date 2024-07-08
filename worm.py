@@ -109,7 +109,7 @@ class Worm:
                 backup, type = backups.pop(0)
                 print(f"Frame errored, trying again with backup frame {type}...")
                 self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", i=self.cframe)
-                ret = self.get_head(backup, backups=(len(backups) > 0), choose_largest_blob=False, save_path_img=True, save_body=save_training_data)
+                ret = self.get_head(backup, backups=(len(backups) > 0), choose_largest_blob=False, save_body=save_training_data)
                 prev = backup
 
             # if there is still an error and the user still wants to skip, then we must return
@@ -150,7 +150,7 @@ class Worm:
         print(f'Runtime of pipeline parts: {times}')
 
         self.cframe += 1
-        return thresh_frame
+        return video_frame
 
     def get_mask(self, original_arr: np.array):
         """
@@ -444,7 +444,7 @@ class Worm:
             chosen_frame = skel_f
             chosen_body = body
         else:
-            large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)), large_size=10000)
+            large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)), large_size=20000)
             self.save_img(binary_thresh(invert(augment_frame)), "srcimg")
             if len(large_blobs) == 0:
                 self.save_img(augment_frame, 'fail_frames/no_blob', i=self.cframe)
@@ -903,6 +903,12 @@ class Worm:
             formatted_name = name + ending
 
         new_p.save(formatted_name)
+
+    def increment_cframe(self):
+        """
+        Increments self.cframe for frame skipping purposes.
+        """
+        self.cframe += 1
 
     def save_body_points(self, i):
         """
