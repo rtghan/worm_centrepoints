@@ -26,7 +26,6 @@ class Worm:
     src: The name of the file of the video recording of this worm.
     intial_head_guess: a (row, column) coordinate detailing an approximate guess for the head position on the
                        first frame
-    skip: Whether or not to automatically skip problematic frames
     segnet: The CNN that we are using to segment the video frames.
 
     Attributes:
@@ -36,12 +35,13 @@ class Worm:
                      at each frame
         sorted_body: a list of the sorted points of the worm centreline from head to end at each frame
         max_points: the max number of body points detecte across all frames
-        skip: whether or not to automatically skip error-throwing frames
         segnet: the CNN used to segment the worm frame
         runtime: a list of the runtimes of each component of the pipeline for each frame
         cframe: current frame to be processed
+        careful: whether or not the pipeline will assume the head position on the first frame is automatically correct,
+                 and will use the choose largest blob method instead of the multi-blob method
     """
-    def __init__(self, src, initial_head_guess, careful, fps, skip, segnet):
+    def __init__(self, src, initial_head_guess, careful, fps, segnet):
         self.src = src
         if initial_head_guess is not None:
             self.head_positions = [initial_head_guess]
@@ -52,7 +52,6 @@ class Worm:
         self.sorted_body = []
         self.cframe = 1
         self.max_points = -1
-        self.skip = skip
         self.segnet = segnet
         self.runtime = []
         self.position_csv, self.position_writer = self.init_csv()
@@ -72,7 +71,9 @@ class Worm:
         hist_end = process_time()
 
         if save_training_data:
-            self.save_img(augment_frame, "input", i=self.cframe)
+            dt = datetime.now()
+            id = int(f'{dt.month}{dt.day}{dt.hour}{dt.minute}{self.cframe}')
+            self.save_img(augment_frame, "train_data/input", i=id)
 
         # fast thresholding using numpy
         thresh_frame = np.asarray(augment_frame)
@@ -84,8 +85,7 @@ class Worm:
         head_grab_start = process_time()
         ret = self.get_head(thresh_frame, choose_largest_blob=(True and (not self.careful)), save_body=save_training_data)
         head_grab_end = process_time()
-        # print(self.sorted_body)
-        #
+
         # the case when the head tracking reported an error due to the new head position being too far from the old one
         backup_start = process_time()
         if ret == -1:
@@ -97,19 +97,19 @@ class Worm:
             for i in range(n_thresh_frames + 1):
                 new_thresh = np.zeros(thresh_frame.shape)
                 new_thresh[thresh_frame > (thresh - i*thresh_step)] = 255
-                backups.append((new_thresh, self.get_head, f"thresh = {str(thresh - i*thresh_step)}"))
+                backups.append((new_thresh, f"thresh = {str(thresh - i*thresh_step)}"))
 
             prev =  thresh_frame
 
             # add last frame as default frame so that it is the one shown to the user if manual intervention needed
-            backups.append((thresh_frame, self.get_head, "default_userbackup"))
+            backups.append((thresh_frame, "default_userbackup"))
 
             # try running the backup frames and see if any of them work
             while ret == -1 and len(backups) > 0:
-                backup, method, type = backups.pop(0)
+                backup, type = backups.pop(0)
                 print(f"Frame errored, trying again with backup frame {type}...")
                 self.save_img(prev, f"fail_frames/input_fail_frame_{len(backups)}_", i=self.cframe)
-                ret = self.get_head(backup, backups=(len(backups) > 0), choose_largest_blob=False, save_body=save_training_data)
+                ret = self.get_head(backup, backups=(len(backups) > 0), choose_largest_blob=False, save_path_img=True, save_body=save_training_data)
                 prev = backup
 
             # if there is still an error and the user still wants to skip, then we must return
@@ -212,6 +212,8 @@ class Worm:
             combined[i], combined[-(i + 1)]  = 0, 0
             combined[:, i], combined[:, -(i + 1)] = 0, 0
         # self.save_img(combined, "cropped", self.cframe)
+
+        # TODO: fix this choose largest blob with maybe a get large blobs, sort, and check if there are more than 2
         worm_grab = ChooseLargestBlob(combined.astype(np.uint8))
         get_worm_end = process_time()
 
@@ -370,8 +372,8 @@ class Worm:
         """
         # look for the worm body guess that offers the closest distance/minimizes the distance metric from the prev
         # previous frame
-        min_head_dist = 9999
-        min_tail_dist = 9999
+        min_head_dist = np.Infinity
+        min_tail_dist = np.Infinity
         worm_body_guess = None
         worm_body_guess_by_tail = None
         prev = self.head_positions[-1]
@@ -387,12 +389,14 @@ class Worm:
                 choice = i
 
             if math.dist(guesses[i][-1], prev) < min_head_dist:
-                worm_body_guess = guesses[i].reverse()
+                worm_body_guess = list(guesses[i])
+                worm_body_guess.reverse()
                 min_head_dist = math.dist(guesses[i][-1], prev)
                 choice = i
 
             if math.dist(guesses[i][0], prev_tail) < min_tail_dist:
-                worm_body_guess_by_tail = guesses[i].reverse()
+                worm_body_guess_by_tail = list(guesses[i])
+                worm_body_guess_by_tail.reverse()
                 min_tail_dist = math.dist(guesses[i][0], prev_tail)
                 choice_tail = i
 
@@ -440,8 +444,8 @@ class Worm:
             chosen_frame = skel_f
             chosen_body = body
         else:
-            large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)))
-
+            large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)), large_size=10000)
+            self.save_img(binary_thresh(invert(augment_frame)), "srcimg")
             if len(large_blobs) == 0:
                 self.save_img(augment_frame, 'fail_frames/no_blob', i=self.cframe)
                 return -1
@@ -450,7 +454,11 @@ class Worm:
             for i in range(len(large_blobs)):
                 skel_f, body = self.get_mask_no_CNN(invert(large_blobs[i]), save_img=save_path_img)
                 if save_path_img:
-                    self.save_img(skel_f, f"skeleton preprocess_{i}", i=self.cframe)
+                    dt = datetime.now()
+                    self.save_img(skel_f, f"skeleton {i} ", i=dt.microsecond)
+                    self.save_img(large_blobs[i], f'preprocess blob {i} ', i=dt.microsecond)
+                    self.save_img(body, f"smooth blob {i} ", i=dt.microsecond)
+
                 path = self.get_longest_path(skel_f, print_runtime=print_runtime)
                 paths.append(list(path))
                 frames.append(skel_f)
@@ -481,12 +489,21 @@ class Worm:
                 self.save_img(chosen_frame, "temp_processed_frames/skeleton", i=self.cframe)
 
             if save_body:
-                self.save_img(chosen_body, "train_data/body", i=self.cframe)
+                dt = datetime.now()
+                id = int(f'{dt.month}{dt.day}{dt.hour}{dt.minute}{self.cframe}')
+                path = "train_data/"
+
+                pts = chosen_body.shape[0] * chosen_body.shape[1]
+                if len(np.column_stack(np.where(chosen_body != 0)))/pts > 0.3:
+                    path = "adjust_required/"
+
+                self.save_img(chosen_body, path + "body", i=id)
         else:
             # if we return an error on the head, then we should try processing a backup if there are any
             if backups:
                 return -1
 
+            print("Getting User Selection:")
             user_choice = self._get_user_selection(augment_frame, paths)
 
             # stop updating the worm for this frame if the user desires (choosing 'Skip Frame')
@@ -499,10 +516,21 @@ class Worm:
                 if np.array_equal(body[0], head):
                     self.sorted_body.append(list(body))
                 else:
-                    self.sorted_body.append(list(body).reverse())
+                    body = list(body)
+                    body.reverse()
+                    self.sorted_body.append(body)
 
                 if save_body:
-                    self.save_img(bodies[selection], "train_data/body", i=self.cframe)
+                    chosen_body = bodies[selection]
+                    dt = datetime.now()
+                    id = int(f'{dt.month}{dt.day}{dt.hour}{dt.minute}{self.cframe}')
+                    path = "train_data/"
+
+                    pts = chosen_body.shape[0] * chosen_body.shape[1]
+                    if len(np.column_stack(np.where(chosen_body != 0))) / pts > 0.3:
+                        path = "adjust_required/"
+
+                    self.save_img(chosen_body, path + "body", i=id)
             else:
                 return -1
 
@@ -618,10 +646,6 @@ class Worm:
         """
         paths = []
         end_points = np.column_stack(np.where(end_mat != 0))
-        fork_points = np.column_stack(np.where(end_mat != 0))
-
-        # TODO: deal with non connected components
-
         visited = np.zeros(skeleton_frame.shape)
         explore_stack = list(end_points)
 
@@ -630,9 +654,12 @@ class Worm:
             next_points, path = self.explore(skeleton_frame, poi, end_mat, fork_mat, visited)
             explore_stack += next_points
             paths.append(path)
-
-        sorted_paths = sorted(paths, key=lambda x: x[0], reverse=True)
-        return sorted_paths[0]
+        if len(paths) > 0:
+            sorted_paths = sorted(paths, key=lambda x: x[0], reverse=True)
+            return sorted_paths[0]
+        else:
+            print("Empty skeleton given, no path found.")
+            return 0, [(0, 0)]
 
     def explore(self, skeleton_frame, start_point, end_mat, fork_mat, visited):
         """
