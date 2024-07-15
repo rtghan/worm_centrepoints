@@ -579,7 +579,7 @@ class Worm:
         body_choice, head_choice, tail_choice = None, None, None
         other_choice = None
         body_picked = True
-        while body_choice is None:
+        while body_choice is None and other_choice is None:
             try:
                 selection = int(input("Select the head/option: "))
                 if type(worm_head_tails[selection]) != tuple:
