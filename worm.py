@@ -235,8 +235,9 @@ class Worm:
         if save_img:
             self.save_img(mask_erode, "erode", i=self.cframe)
 
-        # mask_skeleton = skimage.morphology.skeletonize(mask_erode)
-        mask_skeleton = skeletonize(mask_erode)
+        mask_skeleton = skimage.morphology.skeletonize(mask_erode)
+
+        # mask_skeleton = skeletonize(mask_erode)
 
         if save_img:
             self.save_img(mask_skeleton, "skeleton", i=self.cframe)
@@ -306,7 +307,7 @@ class Worm:
         points at that point in the frame, as determined by https://ieeexplore.ieee.org/document/799914.
         """
         skeleton_points = np.column_stack(np.where(skeleton_frame != 0))
-        bin_frame = skeleton_frame / 255
+        bin_frame = binary_thresh(skeleton_frame, thresh=0.1) / 255
 
         N_c_mat = np.zeros(bin_frame.shape)
         for r, c in skeleton_points:
@@ -445,7 +446,6 @@ class Worm:
             chosen_body = body
         else:
             large_blobs = get_large_blobs(binary_thresh(invert(augment_frame)), large_size=20000)
-            self.save_img(binary_thresh(invert(augment_frame)), "srcimg")
             if len(large_blobs) == 0:
                 self.save_img(augment_frame, 'fail_frames/no_blob', i=self.cframe)
                 return -1
