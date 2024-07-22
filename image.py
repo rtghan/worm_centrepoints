@@ -24,11 +24,13 @@ def get_image(video,frame):
     original_dim = arr.shape
     return arr
 
+  
 def invert(image):
     """
     Inverts a binary image.
     """
     return 255 - image
+
 
 def binary_thresh(image, thresh=127, cap=255):
     """
@@ -38,6 +40,7 @@ def binary_thresh(image, thresh=127, cap=255):
     bin[image >= thresh] = 255
 
     return bin
+  
 
 def get_edges(image):
     """

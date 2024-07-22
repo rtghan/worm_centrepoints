@@ -231,7 +231,7 @@ class Worm:
         # erode and get center line
         get_skel = process_time()
         mask_erode = erode(smooth) # erosion actually speeds skeletonization up by reducing # pixels to deal with
-
+        
         if save_img:
             self.save_img(mask_erode, "erode", i=self.cframe)
 
@@ -241,6 +241,7 @@ class Worm:
 
         if save_img:
             self.save_img(mask_skeleton, "skeleton", i=self.cframe)
+
         get_skel_end = process_time()
 
         if print_runtime:
